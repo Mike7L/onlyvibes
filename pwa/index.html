@@ -6,68 +6,85 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="OnlyMusic">
-    <meta name="theme-color" content="#1a1a1a">
+    <meta name="theme-color" content="#121212">
     
     <title>OnlyMusic</title>
     
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="icon-192.png">
+    
+    <!-- Material Symbols & Roboto -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0" rel="stylesheet">
+    
     <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-    <div class="app">
-        <!-- Header -->
-        <header class="header">
-            <h1>🎵 OnlyMusic</h1>
+<body class="md-theme-dark">
+    <div class="app-layout">
+        <!-- Top App Bar -->
+        <header class="top-app-bar">
+            <div class="headline">OnlyMusic</div>
+            <button class="icon-btn" id="searchToggleBtn">
+                <span class="material-symbols-rounded">search</span>
+            </button>
         </header>
 
-        <!-- Search Bar -->
-        <div class="search-container">
-            <input 
-                type="text" 
-                id="searchInput" 
-                placeholder="Search for music..." 
-                autocomplete="off"
-            >
-            <button id="searchBtn">🔍</button>
-        </div>
-
-        <!-- Status Message -->
-        <div id="statusMsg" class="status-msg"></div>
-
-        <!-- Track List -->
-        <div class="track-list" id="trackList">
-            <div class="empty-state">
-                <p>🎼</p>
-                <p>Search for music to start</p>
+        <!-- Search Bar (Collapsible) -->
+        <div class="search-bar-container" id="searchBarContainer">
+            <div class="search-bar">
+                <span class="material-symbols-rounded leading-icon">search</span>
+                <input type="text" id="searchInput" placeholder="Search songs..." autocomplete="off">
+                <button class="icon-btn" id="searchExecBtn">
+                    <span class="material-symbols-rounded">arrow_forward</span>
+                </button>
             </div>
         </div>
 
-        <!-- Player Controls -->
-        <div class="player-controls">
-            <div class="now-playing" id="nowPlaying">
-                <span class="track-title">No track playing</span>
-                <span class="track-time">0:00 / 0:00</span>
+        <!-- Status Message (Toast) -->
+        <div id="statusMsg" class="snackbar"></div>
+
+        <!-- Main Content (Track List) -->
+        <main class="content-container">
+            <div class="track-list" id="trackList">
+                <div class="empty-state">
+                    <span class="material-symbols-rounded icon-large">library_music</span>
+                    <p>Your library is empty</p>
+                    <small>Search to add music</small>
+                </div>
             </div>
-            
+        </main>
+
+        <!-- Bottom Player Sheet -->
+        <div class="bottom-player" id="bottomPlayer">
             <div class="progress-container">
-                <div class="progress-bar">
+                <div class="progress-bar" id="progressBar">
                     <div class="progress-fill" id="progressFill"></div>
-                    <div class="progress-handle" id="progressHandle"></div>
                 </div>
             </div>
             
-            <div class="controls-buttons">
-                <button id="prevBtn" class="control-btn">⏮</button>
-                <button id="seekBackBtn" class="control-btn">⏪</button>
-                <button id="playPauseBtn" class="control-btn play-btn">▶️</button>
-                <button id="seekFwdBtn" class="control-btn">⏩</button>
-                <button id="nextBtn" class="control-btn">⏭</button>
+            <div class="player-content">
+                <div class="track-info_player">
+                    <div class="track-title" id="nowPlayingTitle">Not Playing</div>
+                    <div class="track-time" id="nowPlayingTime">0:00</div>
+                </div>
+
+                <div class="controls_player">
+                    <button class="icon-btn" id="prevBtn">
+                        <span class="material-symbols-rounded">skip_previous</span>
+                    </button>
+                    
+                    <button class="fab-primary" id="playPauseBtn">
+                        <span class="material-symbols-rounded" id="playIcon">play_arrow</span>
+                    </button>
+                    
+                    <button class="icon-btn" id="nextBtn">
+                        <span class="material-symbols-rounded">skip_next</span>
+                    </button>
+                </div>
             </div>
         </div>
 
-        <!-- Hidden Audio Element -->
-        <audio id="audioPlayer" preload="metadata"></audio>
+        <audio id="audioPlayer" preload="auto"></audio>
     </div>
 
     <script src="app.js"></script>
