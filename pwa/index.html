@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="OnlyMusic">
+    <meta name="theme-color" content="#1a1a1a">
+    
+    <title>OnlyMusic</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <h1>🎵 OnlyMusic</h1>
+        </header>
+
+        <!-- Search Bar -->
+        <div class="search-container">
+            <input 
+                type="text" 
+                id="searchInput" 
+                placeholder="Search for music..." 
+                autocomplete="off"
+            >
+            <button id="searchBtn">🔍</button>
+        </div>
+
+        <!-- Status Message -->
+        <div id="statusMsg" class="status-msg"></div>
+
+        <!-- Track List -->
+        <div class="track-list" id="trackList">
+            <div class="empty-state">
+                <p>🎼</p>
+                <p>Search for music to start</p>
+            </div>
+        </div>
+
+        <!-- Player Controls -->
+        <div class="player-controls">
+            <div class="now-playing" id="nowPlaying">
+                <span class="track-title">No track playing</span>
+                <span class="track-time">0:00 / 0:00</span>
+            </div>
+            
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                    <div class="progress-handle" id="progressHandle"></div>
+                </div>
+            </div>
+            
+            <div class="controls-buttons">
+                <button id="prevBtn" class="control-btn">⏮</button>
+                <button id="seekBackBtn" class="control-btn">⏪</button>
+                <button id="playPauseBtn" class="control-btn play-btn">▶️</button>
+                <button id="seekFwdBtn" class="control-btn">⏩</button>
+                <button id="nextBtn" class="control-btn">⏭</button>
+            </div>
+        </div>
+
+        <!-- Hidden Audio Element -->
+        <audio id="audioPlayer" preload="metadata"></audio>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,601 @@
+#!/usr/bin/env python3
+"""
+Music Streamer - Консольное приложение для стриминга музыки
+Автоматический режим: предлагает направления, играет всё найденное
+С кешированием на диск для быстрого доступа
+"""
+
+import subprocess
+import sys
+import json
+import os
+import hashlib
+import threading
+import time
+import socket
+import select
+import termios
+import tty
+from pathlib import Path
+from typing import List, Dict, Optional, Any
+import random
+
+
+class MusicStreamer:
+    """Класс для стриминга музыки с кешированием"""
+    
+    # Популярные направления музыки
+    MUSIC_DIRECTIONS = [
+        "lofi hip hop beats to relax",
+        "jazz music for work",
+        "classical piano peaceful",
+        "ambient electronic music",
+        "indie folk acoustic",
+        "synthwave retrowave",
+        "chill house music",
+        "meditation nature sounds",
+        "rock classics 80s 90s",
+        "deep house mix"
+    ]
+    
+    def __init__(self, cache_dir: str = None):
+        self.playlist: List[Dict] = []
+        self.current_index: int = 0
+        
+        # Настройка кеша
+        if cache_dir is None:
+            cache_dir = os.path.expanduser("~/.cache/music-streamer")
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Файл с метаданными кеша
+        self.cache_meta_file = self.cache_dir / "cache_metadata.json"
+        self.cache_metadata = self._load_cache_metadata()
+        
+        # Для фонового кеширования
+        self.download_threads: List[threading.Thread] = []
+        
+        # Состояние mpv
+        self.mpv_process: Optional[subprocess.Popen] = None
+        self.mpv_socket = "/tmp/mpv-music-streamer.sock"
+        
+    def _load_cache_metadata(self) -> Dict:
+        """Загрузка метаданных кеша"""
+        if self.cache_meta_file.exists():
+            try:
+                with open(self.cache_meta_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # Обеспечиваем наличие ключей для сессии
+                    if 'files' not in data:
+                        return {'files': data, 'last_session': None}
+                    return data
+            except:
+                return {'files': {}, 'last_session': None}
+        return {'files': {}, 'last_session': None}
+    
+    def _save_cache_metadata(self) -> None:
+        """Сохранение метаданных кеша"""
+        with open(self.cache_meta_file, 'w', encoding='utf-8') as f:
+            json.dump(self.cache_metadata, f, ensure_ascii=False, indent=2)
+    
+    def _get_cache_path(self, url: str) -> Path:
+        """Получить путь к кешированному файлу"""
+        url_hash = hashlib.md5(url.encode()).hexdigest()
+        return self.cache_dir / f"{url_hash}.m4a"
+    
+    def _is_cached(self, url: str) -> bool:
+        """Проверить, есть ли файл в кеше"""
+        cache_path = self._get_cache_path(url)
+        return cache_path.exists() and url in self.cache_metadata.get('files', {})
+
+    def delete_from_cache(self, url: str) -> bool:
+        """Удалить трек из кеша"""
+        deleted = False
+        # Remove file
+        cache_path = self._get_cache_path(url)
+        if cache_path.exists():
+            try:
+                cache_path.unlink()
+                deleted = True
+            except OSError:
+                pass
+        
+        # Remove metadata
+        if 'files' in self.cache_metadata and url in self.cache_metadata['files']:
+            del self.cache_metadata['files'][url]
+            self._save_cache_metadata()
+            deleted = True
+            
+        return deleted
+    
+    def _send_mpv_command(self, command: List) -> bool:
+        """Отправить команду в mpv через IPC"""
+        if not Path(self.mpv_socket).exists():
+            return False
+        
+        try:
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.connect(self.mpv_socket)
+            msg = json.dumps({"command": command}) + "\n"
+            client.send(msg.encode())
+            client.close()
+            return True
+        except:
+            return False
+
+    def _get_mpv_property(self, prop: str) -> Any:
+        """Получить свойство mpv через IPC"""
+        if not Path(self.mpv_socket).exists():
+            return None
+        
+        try:
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.settimeout(0.2)
+            client.connect(self.mpv_socket)
+            msg = json.dumps({"command": ["get_property", prop]}) + "\n"
+            client.send(msg.encode())
+            response = client.recv(4096).decode()
+            client.close()
+            data = json.loads(response.split('\n')[0])
+            return data.get('data')
+        except:
+            return None
+
+    def _fade_out_and_stop(self) -> None:
+        """Плавное затухание и остановка текущего плеера"""
+        if not self.mpv_process:
+            return
+            
+        print("🔈 Затухание...")
+        for vol in range(100, -1, -20):
+            self._send_mpv_command(["set_property", "volume", vol])
+            time.sleep(0.1)
+            
+        self.mpv_process.terminate()
+        self.mpv_process = None
+        if Path(self.mpv_socket).exists():
+            Path(self.mpv_socket).unlink()
+    
+    def _download_to_cache(self, track: Dict, show_progress: bool = True) -> bool:
+        """Скачать трек в кеш"""
+        url = track['url']
+        cache_path = self._get_cache_path(url)
+        
+        if self._is_cached(url):
+            return True
+        
+        if show_progress:
+            title = track['title'][:50] + "..." if len(track['title']) > 50 else track['title']
+            print(f"📥 Кеширование: {title}")
+        
+        cmd = [
+            'yt-dlp',
+            '--extract-audio',
+            '--audio-format', 'm4a',
+            '--audio-quality', '128k',
+            '-o', str(cache_path),
+            '--no-playlist',
+            '--quiet' if not show_progress else '--progress',
+            url
+        ]
+        
+        try:
+            subprocess.run(cmd, check=True, capture_output=not show_progress)
+            
+            # Сохраняем метаданные
+            if 'files' not in self.cache_metadata:
+                self.cache_metadata['files'] = {}
+            
+            self.cache_metadata['files'][url] = {
+                'title': track['title'],
+                'uploader': track['uploader'],
+                'duration': track['duration'],
+                'cached_at': str(Path(cache_path).stat().st_mtime)
+            }
+            self._save_cache_metadata()
+            
+            if show_progress:
+                print(f"✅ Кешировано: {track['title'][:50]}")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            if show_progress:
+                print(f"❌ Ошибка кеширования: {track['title'][:50]}")
+            return False
+    
+    def _precache_playlist(self, start_index: int = 0, max_tracks: int = 3) -> None:
+        """Предварительное кеширование следующих треков в фоне"""
+        def download_worker(tracks_to_cache):
+            for track in tracks_to_cache:
+                if not self._is_cached(track['url']):
+                    self._download_to_cache(track, show_progress=False)
+        
+        # Определяем треки для кеширования
+        end_index = min(start_index + max_tracks, len(self.playlist))
+        tracks_to_cache = [
+            track for track in self.playlist[start_index:end_index]
+            if not self._is_cached(track['url'])
+        ]
+        
+        if tracks_to_cache:
+            thread = threading.Thread(target=download_worker, args=(tracks_to_cache,), daemon=True)
+            thread.start()
+            self.download_threads.append(thread)
+    
+    def check_dependencies(self) -> bool:
+        """Проверка наличия необходимых зависимостей"""
+        dependencies = {'yt-dlp': 'yt-dlp --version', 'mpv': 'mpv --version'}
+        missing = []
+        
+        for name, cmd in dependencies.items():
+            try:
+                subprocess.run(cmd.split(), stdout=subprocess.DEVNULL, 
+                             stderr=subprocess.DEVNULL, check=True)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                missing.append(name)
+        
+        if missing:
+            print(f"❌ Отсутствуют зависимости: {', '.join(missing)}")
+            print("📦 Установите: brew install yt-dlp mpv")
+            return False
+        return True
+    
+    def search(self, query: str, max_results: int = 10) -> List[Dict]:
+        """Поиск музыки"""
+        print(f"🔍 Поиск: {query}...", end=" ")
+        
+        cmd = [
+            'yt-dlp', '--dump-json', '--default-search', 'ytsearch',
+            '--skip-download', f'ytsearch{max_results}:{query}'
+        ]
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            videos = []
+            
+            for line in result.stdout.strip().split('\n'):
+                if line:
+                    try:
+                        data = json.loads(line)
+                        videos.append({
+                            'title': data.get('title', 'Unknown'),
+                            'url': data.get('webpage_url'),
+                            'duration': data.get('duration'),
+                            'uploader': data.get('uploader', 'Unknown')
+                        })
+                    except json.JSONDecodeError:
+                        continue
+            
+            print(f"✅ Найдено: {len(videos)}")
+            return videos
+        except subprocess.CalledProcessError:
+            print("❌")
+            return []
+    
+    def get_recommendations(self, track: Dict, max_results: int = 3) -> List[Dict]:
+        """Получить рекомендации на основе трека"""
+        # Создаем поисковый запрос на основе названия трека
+        title = track.get('title', '')
+        uploader = track.get('uploader', '')
+        
+        # Формируем запрос: используем название трека или исполнителя
+        if uploader and uploader != 'Unknown':
+            query = f"{uploader} similar music"
+        else:
+            # Берем первые слова из названия для более общего поиска
+            words = title.split()[:3]
+            query = ' '.join(words)
+        
+        return self.search(query, max_results=max_results)
+    
+    def format_duration(self, seconds: int) -> str:
+        """Форматирование длительности"""
+        if seconds is None:
+            return "LIVE"
+        minutes, secs = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}:{minutes:02d}:{secs:02d}" if hours > 0 else f"{minutes}:{secs:02d}"
+    
+    def show_playlist(self) -> None:
+        """Показать текущий плейлист"""
+        if not self.playlist:
+            print("\n📋 Плейлист пуст")
+            return
+        
+        print("\n" + "="*80)
+        print(f"📋 ПЛЕЙЛИСТ ({len(self.playlist)} треков)")
+        print("="*80)
+        
+        cached_count = sum(1 for track in self.playlist if self._is_cached(track['url']))
+        print(f"💾 В кеше: {cached_count}/{len(self.playlist)}")
+        print("="*80)
+        
+        for i, track in enumerate(self.playlist, 1):
+            marker = "▶️ " if i == self.current_index + 1 else "   "
+            cache_marker = "💾" if self._is_cached(track['url']) else "☁️ "
+            duration = self.format_duration(track.get('duration'))
+            title = track['title'][:55] + "..." if len(track['title']) > 55 else track['title']
+            print(f"{marker}{cache_marker}{i:2d}. {title}")
+            print(f"      👤 {track['uploader']} | ⏱️  {duration}")
+        
+        print("="*80)
+    
+    def play_playlist(self, query: str = None, use_cache: bool = True) -> None:
+        """Воспроизведение всего плейлиста в фоне"""
+        if not self.playlist:
+            print("❌ Плейлист пуст")
+            return
+        
+        # Останавливаем предыдущий если есть (с затуханием)
+        if self.mpv_process:
+            self._fade_out_and_stop()
+
+        # Сохраняем информацию о текущей сессии
+        self.cache_metadata['last_session'] = {
+            'query': query,
+            'playlist': self.playlist
+        }
+        self._save_cache_metadata()
+        
+        # Запускаем фоновое кеширование
+        if use_cache:
+            self._precache_playlist(start_index=0, max_tracks=5)
+        
+        # Формируем список файлов/URL для воспроизведения
+        playlist_items = []
+        for track in self.playlist:
+            if use_cache and self._is_cached(track['url']):
+                playlist_items.append(str(self._get_cache_path(track['url'])))
+            else:
+                playlist_items.append(track['url'])
+        
+        cmd = [
+            'mpv',
+            '--no-video',
+            '--ytdl-format=bestaudio/best',
+            '--force-window=no',
+            '--input-ipc-server=' + self.mpv_socket,
+            '--no-terminal'
+        ] + playlist_items
+        
+        print(f"▶️  Запуск: {self.playlist[0]['title'][:50]}...")
+        # Запускаем mpv в фоне
+        self.mpv_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    def cache_all_playlist(self) -> None:
+        """Кешировать весь плейлист"""
+        if not self.playlist:
+            print("❌ Плейлист пуст")
+            return
+        
+        uncached = [t for t in self.playlist if not self._is_cached(t['url'])]
+        
+        if not uncached:
+            print("✅ Все треки уже в кеше")
+            return
+        
+        print(f"\n📥 Кеширование {len(uncached)} треков...")
+        
+        for i, track in enumerate(uncached, 1):
+            print(f"\n[{i}/{len(uncached)}]")
+            self._download_to_cache(track, show_progress=True)
+        
+        print("\n✅ Кеширование завершено")
+    
+    def show_cache_stats(self) -> None:
+        """Показать статистику кеша"""
+        total_files = len(list(self.cache_dir.glob("*.m4a")))
+        total_size = sum(f.stat().st_size for f in self.cache_dir.glob("*.m4a"))
+        size_mb = total_size / (1024 * 1024)
+        
+        print("\n" + "="*80)
+        print("💾 СТАТИСТИКА КЕША")
+        print("="*80)
+        print(f"📁 Директория: {self.cache_dir}")
+        print(f"🎵 Треков в кеше: {total_files}")
+        print(f"💿 Размер: {size_mb:.1f} MB")
+        print("="*80)
+    
+    def clear_cache(self) -> None:
+        """Очистить кеш"""
+        files = list(self.cache_dir.glob("*.m4a"))
+        if not files:
+            print("✅ Кеш уже пуст")
+            return
+        
+        confirm = input(f"⚠️  Удалить {len(files)} файлов из кеша? (y/N): ").strip().lower()
+        if confirm == 'y':
+            for f in files:
+                f.unlink()
+            self.cache_metadata['files'] = {}
+            self._save_cache_metadata()
+            print("✅ Кеш очищен")
+        else:
+            print("❌ Отменено")
+    
+    def show_directions(self) -> None:
+        """Показать направления музыки"""
+        print("\n" + "="*80)
+        print("🎵 НАПРАВЛЕНИЯ МУЗЫКИ")
+        print("="*80)
+        
+        for i, direction in enumerate(self.MUSIC_DIRECTIONS, 1):
+            print(f"{i:2d}. {direction}")
+        
+        last_session = self.cache_metadata.get('last_session')
+        if last_session:
+            query = last_session.get('query', 'Предыдущая сессия')
+            print(f"\n ↩️  Enter - продолжить: {query}")
+        else:
+            print(f"\n 🎲 Enter - случайный выбор")
+            
+        print(" [текст] - поиск | c - кеш | x - очистить | q - выход")
+        print("="*80)
+    
+    def _update_status_ui(self) -> None:
+        """Фоновый поток для обновления строки прогресса"""
+        while True:
+            if self.mpv_process and self.mpv_process.poll() is None:
+                time_pos = self._get_mpv_property("time-pos")
+                duration = self._get_mpv_property("duration")
+                paused = self._get_mpv_property("pause")
+                
+                # Попробуем получить информацию о текущем и следующем треке
+                playlist_pos = self._get_mpv_property("playlist-pos")
+                playlist_count = self._get_mpv_property("playlist-count")
+                
+                title = "Музыка"
+                next_title = ""
+                
+                if playlist_pos is not None:
+                    # Используем название из нашего плейлиста, так как mpv для кешированных файлов может показывать хеш
+                    if 0 <= playlist_pos < len(self.playlist):
+                        title = self.playlist[playlist_pos]['title']
+                        
+                        # Если трек изменился
+                        if self.current_index != playlist_pos:
+                            self.current_index = playlist_pos
+                        
+                    if playlist_count is not None and playlist_pos < playlist_count - 1:
+                        if playlist_pos + 1 < len(self.playlist):
+                            next_title = self.playlist[playlist_pos + 1]['title']
+                
+                if time_pos is not None and duration:
+                    perc = int((time_pos / duration) * 100)
+                    bar_w = 20
+                    filled = int(bar_w * perc / 100)
+                    bar = "█" * filled + "░" * (bar_w - filled)
+                    
+                    status = "▶️" if not paused else "⏸️"
+                    curr = self.format_duration(int(time_pos))
+                    total = self.format_duration(int(duration))
+                    
+                    # Формируем строку статуса
+                    line1 = f"{status} [{curr}/{total}] {title[:50]} [{bar}] {perc}%"
+                    line2 = f"⏭️ Далее: {next_title[:60]}" if next_title else ""
+                    
+                    sys.stdout.write("\033[s") # Сохраняем положение (строка ввода)
+                    # Поднимаемся на 2 строки вверх
+                    sys.stdout.write("\033[A\033[A")
+                    sys.stdout.write(f"\r\033[K{line1}\n\r\033[K{line2}")
+                    sys.stdout.write("\033[u") # Возвращаемся в строку ввода
+                    sys.stdout.flush()
+            time.sleep(1)
+
+    def run(self) -> None:
+        """Главный цикл приложения с интерактивным управлением"""
+        # Запускаем поток обновления статуса
+        status_thread = threading.Thread(target=self._update_status_ui, daemon=True)
+        status_thread.start()
+        
+        print("\n🎵 Music Streamer - Молниеносный режим")
+        
+        try:
+            while True:
+                self.show_directions()
+                
+                # Резервируем место для статуса
+                print("\n\n") # 2 строки для статуса
+                
+                # Читаем ввод посимвольно (Raw Mode)
+                query = ""
+                sys.stdout.write("➤ ")
+                sys.stdout.flush()
+                
+                fd = sys.stdin.fileno()
+                old_settings = termios.tcgetattr(fd)
+                try:
+                    tty.setraw(fd)
+                    while True:
+                        if select.select([sys.stdin], [], [], 0.1)[0]:
+                            char = sys.stdin.read(1)
+                            
+                            if char == '\x1b': # Escape seq
+                                seq = sys.stdin.read(2)
+                                if seq == '[A': # Up - Prev track
+                                    self._send_mpv_command(["playlist_prev"])
+                                elif seq == '[B': # Down - Next track
+                                    self._send_mpv_command(["playlist_next"])
+                                    if self.current_index + 1 < len(self.playlist):
+                                        self.current_index += 1
+                                elif seq == '[C': # Right - Seek +10
+                                    self._send_mpv_command(["seek", 10])
+                                elif seq == '[D': # Left - Seek -10
+                                    self._send_mpv_command(["seek", -10])
+                                continue
+                            
+                            if char == '\x20': # Space - Pause
+                                paused = self._get_mpv_property("pause")
+                                self._send_mpv_command(["set_property", "pause", not paused])
+                                continue
+                            
+                                
+                            if char == '\r' or char == '\n':
+                                break
+                            
+                            if char in ('\x7f', '\x08'): # Backspace
+                                if len(query) > 0:
+                                    query = query[:-1]
+                                    sys.stdout.write("\b \b")
+                                    sys.stdout.flush()
+                                continue
+                                
+                            if ord(char) >= 32:
+                                query += char
+                                sys.stdout.write(char)
+                                sys.stdout.flush()
+                        
+                finally:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                
+                choice = query.strip()
+                print() # Переход на новую строку после Enter
+                
+                if choice.lower() == 'q':
+                    if self.mpv_process: self.mpv_process.terminate()
+                    break
+                
+                if choice.lower() == 'c': self.show_cache_stats(); continue
+                if choice.lower() == 'x': self.clear_cache(); continue
+                
+                if choice == '':
+                    last = self.cache_metadata.get('last_session')
+                    if last and last.get('playlist'):
+                        query = last.get('query', 'Resume')
+                        self.playlist = last['playlist']
+                        self.play_playlist(query=query); continue
+                    else: choice = random.choice(self.MUSIC_DIRECTIONS)
+
+                if choice.isdigit():
+                    idx = int(choice) - 1
+                    query = self.MUSIC_DIRECTIONS[idx] if 0 <= idx < len(self.MUSIC_DIRECTIONS) else choice
+                else: query = choice
+                
+                videos = self.search(query)
+                if not videos: continue
+                
+                if self.mpv_process and self.mpv_process.poll() is None:
+                    self._download_to_cache(videos[0], show_progress=True)
+                
+                self.playlist = videos
+                self.play_playlist(query=query)
+                
+        except (KeyboardInterrupt, EOFError):
+            if self.mpv_process: self.mpv_process.terminate()
+            print("\n👋 Выход...")
+
+def main():
+    """Главная функция"""
+    streamer = MusicStreamer()
+    
+    if not streamer.check_dependencies():
+        sys.exit(1)
+    
+    try:
+        streamer.run()
+    except KeyboardInterrupt:
+        print("\n\n👋 До свидания!")
+
+if __name__ == '__main__':
+    main()
+
