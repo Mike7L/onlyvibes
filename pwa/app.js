@@ -1,4 +1,4 @@
-// OnlyMusic PWA - Main Application Logic
+// OnlyMusic PWA - Main Application Logic (Material Design Version)
 
 class MusicApp {
     constructor() {
@@ -16,44 +16,79 @@ class MusicApp {
 
     initElements() {
         this.searchInput = document.getElementById('searchInput');
-        this.searchBtn = document.getElementById('searchBtn');
+        this.searchBtn = document.getElementById('searchExecBtn');
         this.trackList = document.getElementById('trackList');
         this.audioPlayer = document.getElementById('audioPlayer');
+        
+        // Controls
         this.playPauseBtn = document.getElementById('playPauseBtn');
+        this.playIcon = document.getElementById('playIcon');
         this.prevBtn = document.getElementById('prevBtn');
         this.nextBtn = document.getElementById('nextBtn');
-        this.seekBackBtn = document.getElementById('seekBackBtn');
-        this.seekFwdBtn = document.getElementById('seekFwdBtn');
+        
+        // Progress
+        this.progressBar = document.getElementById('progressBar');
         this.progressFill = document.getElementById('progressFill');
-        this.progressHandle = document.getElementById('progressHandle');
-        this.nowPlaying = document.getElementById('nowPlaying');
+        
+        // Info
+        this.nowPlayingTitle = document.getElementById('nowPlayingTitle');
+        this.nowPlayingTime = document.getElementById('nowPlayingTime');
         this.statusMsg = document.getElementById('statusMsg');
+        
+        // UI Toggles
+        this.searchToggleBtn = document.getElementById('searchToggleBtn');
+        this.searchBarContainer = document.getElementById('searchBarContainer');
     }
 
     initAudio() {
         this.audioPlayer.addEventListener('timeupdate', () => this.updateProgress());
         this.audioPlayer.addEventListener('ended', () => this.playNext());
-        this.audioPlayer.addEventListener('loadedmetadata', () => this.updateNowPlaying());
+        this.audioPlayer.addEventListener('loadedmetadata', () => {
+             // Optional: Update duration display if needed immediately
+        });
         this.audioPlayer.addEventListener('error', (e) => this.handleAudioError(e));
+        
+        // Play State Sync
+        this.audioPlayer.addEventListener('play', () => {
+            this.isPlaying = true;
+            this.updatePlayBtnState();
+        });
+        this.audioPlayer.addEventListener('pause', () => {
+            this.isPlaying = false;
+            this.updatePlayBtnState();
+        });
     }
 
     initEventListeners() {
-        // Search
-        this.searchBtn.addEventListener('click', () => this.search());
-        this.searchInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.search();
-        });
+        // Search Toggle
+        if(this.searchToggleBtn) {
+            this.searchToggleBtn.addEventListener('click', () => {
+                this.searchBarContainer.classList.toggle('active');
+                if(this.searchBarContainer.classList.contains('active')) {
+                    this.searchInput.focus();
+                }
+            });
+        }
 
-        // Playback controls
+        // Search Execution
+        if (this.searchBtn) {
+            this.searchBtn.addEventListener('click', () => this.search());
+        }
+        if (this.searchInput) {
+            this.searchInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.search();
+            });
+        }
+
+        // Controls
         this.playPauseBtn.addEventListener('click', () => this.togglePlayPause());
         this.prevBtn.addEventListener('click', () => this.playPrevious());
         this.nextBtn.addEventListener('click', () => this.playNext());
-        this.seekBackBtn.addEventListener('click', () => this.seek(-5));
-        this.seekFwdBtn.addEventListener('click', () => this.seek(5));
 
-        // Progress bar
-        const progressBar = document.querySelector('.progress-bar');
-        progressBar.addEventListener('click', (e) => this.seekToPosition(e));
+        // Progress bar click
+        if (this.progressBar && this.progressBar.parentElement) {
+             this.progressBar.parentElement.addEventListener('click', (e) => this.seekToPosition(e));
+        }
     }
 
     async registerServiceWorker() {
@@ -70,8 +105,18 @@ class MusicApp {
     loadCachedTracks() {
         const cached = localStorage.getItem('onlymusic_tracks');
         if (cached) {
-            this.tracks = JSON.parse(cached);
-            this.renderTracks();
+            try {
+                this.tracks = JSON.parse(cached);
+                this.renderTracks();
+                
+                // If tracks exist, load the first one but don't play
+                if (this.tracks.length > 0) {
+                    this.currentTrackIndex = 0;
+                    this.updateNowPlaying();
+                }
+            } catch (e) {
+                console.error("Cache load error", e);
+            }
         }
     }
 
@@ -83,190 +128,109 @@ class MusicApp {
         const query = this.searchInput.value.trim();
         if (!query) return;
 
-        this.showStatus('🔍 Searching...');
+        this.showStatus('Searching...');
+        this.searchBarContainer.classList.remove('active'); // Close bar
 
         try {
-            // Use YouTube search via yt-dlp API or fallback
             const results = await this.searchYouTube(query);
             
             if (results.length > 0) {
-                // Add new tracks
+                let addedCount = 0;
                 results.forEach(track => {
                     if (!this.tracks.find(t => t.url === track.url)) {
                         this.tracks.push(track);
+                        addedCount++;
                     }
                 });
                 
-                this.renderTracks();
-                this.saveTracks();
-                this.showStatus(`✅ Found ${results.length} tracks`);
-                
-                // Scroll to bottom
-                this.trackList.scrollTop = this.trackList.scrollHeight;
+                if (addedCount > 0) {
+                    this.saveTracks();
+                    this.renderTracks();
+                    this.showStatus(`Added ${addedCount} tracks`);
+                } else {
+                    this.showStatus('Tracks already in playlist');
+                }
             } else {
-                this.showStatus('⚠️ No results found');
+                this.showStatus('No results found');
             }
         } catch (error) {
-            this.showStatus('❌ Search error: ' + error.message);
+            this.showStatus('Search failed');
+            console.error(error);
         }
     }
 
     async searchYouTube(query) {
-        // Check cache first
-        if (this.searchCache.has(query)) {
-            return this.searchCache.get(query);
-        }
-
-        // Use a CORS proxy for YouTube search
-        // In production, you'd use a backend API
-        const corsProxy = 'https://api.allorigins.win/raw?url=';
-        const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+        // Simulated search or API call
+        // In a real PWA context without backend, this is tricky due to CORS.
+        // Assuming we might use a proxy or specific API.
+        // For now, returning mock data for demonstration if API fails, or trying Invidious.
         
         try {
-            const response = await fetch(corsProxy + encodeURIComponent(searchUrl));
-            const html = await response.text();
+            // Using Invidious API (public instances)
+            const instance = 'https://inv.tux.pizza'; 
+            const response = await fetch(`${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`);
+            const data = await response.json();
             
-            // Extract video data from YouTube HTML
-            const results = this.parseYouTubeHTML(html);
+            return data.map(item => ({
+                title: item.title,
+                url: `https://youtube.com/watch?v=${item.videoId}`,
+                videoId: item.videoId,
+                duration: item.lengthSeconds,
+                cached: false
+            })).slice(0, 5); // Limit to 5
             
-            // Cache results
-            this.searchCache.set(query, results);
-            
-            return results.slice(0, 3); // Limit to 3 results
-        } catch (error) {
-            // Fallback to mock data if CORS fails
-            console.warn('YouTube search failed, using fallback:', error);
-            return this.getMockResults(query);
-        }
-    }
-
-    parseYouTubeHTML(html) {
-        const results = [];
-        
-        // Extract ytInitialData
-        const match = html.match(/var ytInitialData = ({.*?});/);
-        if (!match) return results;
-        
-        try {
-            const data = JSON.parse(match[1]);
-            const contents = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
-            
-            if (!contents) return results;
-            
-            for (const section of contents) {
-                const items = section?.itemSectionRenderer?.contents || [];
-                
-                for (const item of items) {
-                    const video = item?.videoRenderer;
-                    if (!video) continue;
-                    
-                    const videoId = video.videoId;
-                    const title = video.title?.runs?.[0]?.text || 'Unknown';
-                    const duration = this.parseDuration(video.lengthText?.simpleText || '0:00');
-                    
-                    results.push({
-                        title: title,
-                        url: `https://www.youtube.com/watch?v=${videoId}`,
-                        videoId: videoId,
-                        duration: duration,
-                        cached: false
-                    });
-                    
-                    if (results.length >= 5) break;
+        } catch (e) {
+            console.warn("API Search failed, using mock", e);
+            return [
+                {
+                    title: `${query} - Demo Track`,
+                    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', // Direct MP3 for testing
+                    videoId: 'demo1',
+                    duration: 240,
+                    cached: false
                 }
-                
-                if (results.length >= 5) break;
-            }
-        } catch (error) {
-            console.error('Parse error:', error);
+            ];
         }
-        
-        return results;
-    }
-
-    getMockResults(query) {
-        // Fallback mock data for demo
-        return [
-            {
-                title: `${query} - Result 1`,
-                url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-                videoId: 'dQw4w9WgXcQ',
-                duration: 213,
-                cached: false
-            },
-            {
-                title: `${query} - Result 2`,
-                url: 'https://www.youtube.com/watch?v=9bZkp7q19f0',
-                videoId: '9bZkp7q19f0',
-                duration: 231,
-                cached: false
-            }
-        ];
-    }
-
-    parseDuration(timeStr) {
-        const parts = timeStr.split(':').map(Number);
-        if (parts.length === 2) {
-            return parts[0] * 60 + parts[1];
-        } else if (parts.length === 3) {
-            return parts[0] * 3600 + parts[1] * 60 + parts[2];
-        }
-        return 0;
     }
 
     renderTracks() {
+        this.trackList.innerHTML = '';
         if (this.tracks.length === 0) {
-            this.trackList.innerHTML = `
+             this.trackList.innerHTML = `
                 <div class="empty-state">
-                    <p>🎼</p>
-                    <p>Search for music to start</p>
-                </div>
-            `;
-            return;
+                    <span class="material-symbols-rounded icon-large">library_music</span>
+                    <p>Your library is empty</p>
+                    <small>Search to add music</small>
+                </div>`;
+             return;
         }
-
-        this.trackList.innerHTML = this.tracks.map((track, index) => `
-            <div class="track-item ${index === this.currentTrackIndex ? 'playing' : ''} ${track.cached ? 'cached' : ''}" 
-                 data-index="${index}">
-                <div class="track-header">
-                    <span class="track-title">${this.escapeHtml(track.title)}</span>
-                    <span class="track-duration">${this.formatDuration(track.duration)}</span>
+        
+        this.tracks.forEach((track, index) => {
+            const div = document.createElement('div');
+            div.className = `track-item ${index === this.currentTrackIndex ? 'playing' : ''}`;
+            div.innerHTML = `
+                <div class="album-art-placeholder">
+                    <span class="material-symbols-rounded">music_note</span>
                 </div>
-                <div class="track-progress">
-                    <div class="track-progress-fill" style="width: ${index === this.currentTrackIndex ? this.getProgress() : 0}%"></div>
+                <div class="track-info">
+                    <div class="track-title">${this.escapeHtml(track.title)}</div>
+                    <div class="track-artist">${this.formatDuration(track.duration)}</div>
                 </div>
                 <div class="track-actions">
-                    <button class="track-btn play-track" data-index="${index}">
-                        ${index === this.currentTrackIndex && this.isPlaying ? '⏸' : '▶️'} Play
+                    <button class="icon-btn" onclick="event.stopPropagation(); app.deleteTrack(${index});">
+                         <span class="material-symbols-rounded" style="font-size: 20px;">delete</span>
                     </button>
-                    <button class="track-btn delete-track" data-index="${index}">🗑 Delete</button>
                 </div>
-            </div>
-        `).join('');
-
-        // Add event listeners
-        document.querySelectorAll('.play-track').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const index = parseInt(btn.dataset.index);
+            `;
+            
+            // Add click listener to the whole item
+            div.addEventListener('click', (e) => {
+                // Ignore if clicked on button (handled by onclick above, but good to be safe)
+                if (e.target.closest('.track-actions')) return;
                 this.playTrack(index);
             });
-        });
-
-        document.querySelectorAll('.delete-track').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const index = parseInt(btn.dataset.index);
-                this.deleteTrack(index);
-            });
-        });
-
-        document.querySelectorAll('.track-item').forEach(item => {
-            item.addEventListener('click', (e) => {
-                if (e.target.classList.contains('track-btn')) return;
-                const index = parseInt(item.dataset.index);
-                this.playTrack(index);
-            });
+            
+            this.trackList.appendChild(div);
         });
     }
 
@@ -276,34 +240,39 @@ class MusicApp {
         this.currentTrackIndex = index;
         const track = this.tracks[index];
 
-        this.showStatus('⏳ Loading...');
+        this.updateNowPlaying(); // Update UI immediately
+        this.renderTracks(); // Update list highlight
+        
+        this.showStatus('Loading...');
 
         try {
-            // Get audio stream URL
-            const streamUrl = await this.getStreamUrl(track);
+            let streamUrl = track.url;
+            
+            // If it's a YouTube ID, try to revolve it
+            if (track.videoId && !track.url.endsWith('.mp3')) {
+                 streamUrl = await this.getStreamUrl(track);
+            }
             
             if (streamUrl) {
                 this.audioPlayer.src = streamUrl;
-                await this.audioPlayer.play();
-                this.isPlaying = true;
-                this.playPauseBtn.textContent = '⏸';
-                this.renderTracks();
-                this.showStatus('▶️ Playing');
+                try {
+                    await this.audioPlayer.play();
+                } catch(playError) {
+                    console.error("Autoplay prevented or error", playError);
+                    this.updatePlayBtnState(); // Ensure button reflects state
+                }
             } else {
                 throw new Error('Could not get stream URL');
             }
         } catch (error) {
-            this.showStatus('❌ Playback error');
+            this.showStatus('Playback error');
             console.error('Playback error:', error);
         }
     }
 
     async getStreamUrl(track) {
-        // In a real app, you'd use a backend to extract audio URL
-        // For demo, we'll use YouTube embed audio (limited)
-        
-        // Option 1: Use Invidious API (privacy-friendly YouTube frontend)
-        try {
+        // Try Invidious for stream URL
+         try {
             const invidiousInstance = 'https://inv.tux.pizza';
             const response = await fetch(`${invidiousInstance}/api/v1/videos/${track.videoId}`);
             const data = await response.json();
@@ -316,9 +285,7 @@ class MusicApp {
         } catch (error) {
             console.warn('Invidious failed:', error);
         }
-
-        // Option 2: Fallback to direct YouTube (may not work due to CORS)
-        return `https://www.youtube.com/watch?v=${track.videoId}`;
+        return null;
     }
 
     togglePlayPause() {
@@ -329,14 +296,10 @@ class MusicApp {
             return;
         }
 
-        if (this.isPlaying) {
-            this.audioPlayer.pause();
-            this.isPlaying = false;
-            this.playPauseBtn.textContent = '▶️';
-        } else {
+        if (this.audioPlayer.paused) {
             this.audioPlayer.play();
-            this.isPlaying = true;
-            this.playPauseBtn.textContent = '⏸';
+        } else {
+            this.audioPlayer.pause();
         }
     }
 
@@ -351,105 +314,94 @@ class MusicApp {
             this.playTrack(this.currentTrackIndex - 1);
         }
     }
-
-    seek(seconds) {
-        if (this.audioPlayer.src) {
-            this.audioPlayer.currentTime = Math.max(0, Math.min(
-                this.audioPlayer.duration,
-                this.audioPlayer.currentTime + seconds
-            ));
+    
+    deleteTrack(index) {
+        if(confirm('Delete track?')) {
+            this.tracks.splice(index, 1);
+            this.saveTracks();
+            this.renderTracks();
+            if (index === this.currentTrackIndex) {
+                this.audioPlayer.pause();
+                this.audioPlayer.src = '';
+                this.currentTrackIndex = -1;
+                this.updateNowPlaying();
+            } else if (index < this.currentTrackIndex) {
+                 this.currentTrackIndex--;
+            }
         }
-    }
-
-    seekToPosition(e) {
-        if (!this.audioPlayer.src) return;
-        
-        const progressBar = e.currentTarget;
-        const rect = progressBar.getBoundingClientRect();
-        const percent = (e.clientX - rect.left) / rect.width;
-        this.audioPlayer.currentTime = percent * this.audioPlayer.duration;
     }
 
     updateProgress() {
         if (!this.audioPlayer.duration) return;
-
-        const percent = (this.audioPlayer.currentTime / this.audioPlayer.duration) * 100;
-        this.progressFill.style.width = `${percent}%`;
-        this.progressHandle.style.left = `${percent}%`;
-
-        this.updateNowPlaying();
-    }
-
-    getProgress() {
-        if (!this.audioPlayer.duration) return 0;
-        return (this.audioPlayer.currentTime / this.audioPlayer.duration) * 100;
-    }
-
-    updateNowPlaying() {
-        if (this.currentTrackIndex >= 0 && this.currentTrackIndex < this.tracks.length) {
-            const track = this.tracks[this.currentTrackIndex];
-            const current = this.formatDuration(this.audioPlayer.currentTime);
-            const duration = this.formatDuration(this.audioPlayer.duration || track.duration);
-            
-            this.nowPlaying.innerHTML = `
-                <span class="track-title">${this.escapeHtml(track.title)}</span>
-                <span class="track-time">${current} / ${duration}</span>
-            `;
-        }
-    }
-
-    deleteTrack(index) {
-        if (index === this.currentTrackIndex) {
-            this.audioPlayer.pause();
-            this.audioPlayer.src = '';
-            this.isPlaying = false;
-            this.currentTrackIndex = -1;
-        } else if (index < this.currentTrackIndex) {
-            this.currentTrackIndex--;
-        }
-
-        this.tracks.splice(index, 1);
-        this.saveTracks();
-        this.renderTracks();
-        this.showStatus('🗑 Track deleted');
-    }
-
-    handleAudioError(e) {
-        console.error('Audio error:', e);
-        this.showStatus('❌ Playback failed. Trying next...');
+        const progress = (this.audioPlayer.currentTime / this.audioPlayer.duration) * 100;
+        if(this.progressFill) this.progressFill.style.width = `${progress}%`;
         
-        // Try next track
+        // Update time text
+        if(this.nowPlayingTime) {
+            const current = this.formatTime(this.audioPlayer.currentTime);
+            const total = this.formatTime(this.audioPlayer.duration);
+            this.nowPlayingTime.textContent = `${current} / ${total}`;
+        }
+    }
+
+    seekToPosition(e) {
+        const progressBar = e.currentTarget; // The container
+        const rect = progressBar.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const width = rect.width;
+        const percentage = x / width;
+        
+        if (this.audioPlayer.duration) {
+            this.audioPlayer.currentTime = percentage * this.audioPlayer.duration;
+        }
+    }
+    
+    updatePlayBtnState() {
+        if (this.playIcon) {
+            this.playIcon.textContent = !this.audioPlayer.paused ? 'pause' : 'play_arrow';
+        }
+    }
+    
+    updateNowPlaying() {
+        const track = this.tracks[this.currentTrackIndex];
+        if (track) {
+            if(this.nowPlayingTitle) this.nowPlayingTitle.textContent = track.title;
+        } else {
+             if(this.nowPlayingTitle) this.nowPlayingTitle.textContent = "Not Playing";
+        }
+    }
+
+    showStatus(msg, duration=3000) {
+        this.statusMsg.textContent = msg;
+        this.statusMsg.classList.add('visible');
         setTimeout(() => {
-            this.playNext();
-        }, 1000);
+             this.statusMsg.classList.remove('visible');
+        }, duration);
     }
-
-    showStatus(message) {
-        this.statusMsg.textContent = message;
-        setTimeout(() => {
-            if (this.statusMsg.textContent === message) {
-                this.statusMsg.textContent = '';
-            }
-        }, 3000);
-    }
-
-    formatDuration(seconds) {
-        if (!seconds || isNaN(seconds)) return '0:00';
-        const mins = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    }
-
+    
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
+
+    formatDuration(seconds) {
+        if (!seconds) return '0:00';
+        const m = Math.floor(seconds / 60);
+        const s = Math.floor(seconds % 60);
+        return `${m}:${s.toString().padStart(2, '0')}`;
+    }
+    
+    formatTime(seconds) {
+        return this.formatDuration(seconds);
+    }
+    
+    handleAudioError(e) {
+        console.error("Audio error", e);
+        this.showStatus("Error playing stream");
+    }
 }
 
-// Initialize app when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => new MusicApp());
-} else {
-    new MusicApp();
-}
+// Make app instance global
+const app = new MusicApp();
+window.app = app;
