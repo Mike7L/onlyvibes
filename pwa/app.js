@@ -16,13 +16,12 @@ class MusicApp {
         this.registerServiceWorker();
         this.loadCachedTracks();
 
-        // MIXED API Instances (Piped & Invidious) - Choosing ones with better CORS history
+        // MIXED API Instances (Piped & Invidious) - Prioritizing verified working instances
         this.apiInstances = [
-            { type: 'piped', url: 'https://pipedapi.kavin.rocks' },
-            { type: 'invidious', url: 'https://vid.puffyan.us' },
-            { type: 'piped', url: 'https://pipedapi.rivo.gg' },
-            { type: 'invidious', url: 'https://inv.nadeko.net' },
-            { type: 'piped', url: 'https://pipedapi.projectsegfau.lt' }
+            { type: 'invidious', url: 'https://iv.melmac.space' },
+            { type: 'invidious', url: 'https://invidious.reallyaweso.me' },
+            { type: 'invidious', url: 'https://invidious.protokolla.fi' }, // Captcha protected but might work with cookies later
+            { type: 'piped', url: 'https://pipedapi.kavin.rocks' }, // Fallback
         ];
         this.currentInstanceIndex = 0;
     }

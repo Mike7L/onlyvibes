@@ -1,11 +1,12 @@
 // OnlyMusic Service Worker
-const CACHE_NAME = 'onlymusic-v1';
+const CACHE_NAME = 'onlymusic-v2';
 const urlsToCache = [
   './',
   './index.html',
   './styles.css',
   './app.js',
-  './manifest.json'
+  './manifest.json',
+  './icon.svg'
 ];
 
 // Install event - cache files

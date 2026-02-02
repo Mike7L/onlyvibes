@@ -29,8 +29,23 @@ def check_instance(instance):
         with urllib.request.urlopen(req, timeout=5) as response:
             latency = (time.time() - start_time) * 1000
             if response.status == 200:
-                print(f"✅ {instance:<30} | Status: 200 | Latency: {latency:.0f}ms")
-                return True
+                # Check if response is actually JSON
+                content_type = response.headers.get('Content-Type', '')
+                if 'application/json' not in content_type:
+                    print(f"❌ {instance:<30} | Error: Not JSON ({content_type})")
+                    return False
+                
+                try:
+                    data = json.loads(response.read().decode())
+                    if isinstance(data, list) or 'items' in data:
+                        print(f"✅ {instance:<30} | Status: 200 | Latency: {latency:.0f}ms")
+                        return True
+                    else:
+                        print(f"❌ {instance:<30} | Error: Unexpected JSON format")
+                        return False
+                except json.JSONDecodeError:
+                    print(f"❌ {instance:<30} | Error: Valid 200 but invalid JSON")
+                    return False
             else:
                 print(f"❌ {instance:<30} | Status: {response.status}")
                 return False
