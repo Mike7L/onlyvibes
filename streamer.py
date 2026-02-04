@@ -67,9 +67,13 @@ class MusicStreamer:
         
         # Инстансы PWA API (для быстрого поиска)
         self.pwa_instances = self.config.get("api_instances", [
-            {'type': 'invidious', 'url': 'https://iv.melmac.space'},
-            {'type': 'invidious', 'url': 'https://invidious.reallyaweso.me'},
             {'type': 'piped', 'url': 'https://pipedapi.kavin.rocks'},
+            {'type': 'piped', 'url': 'https://api.piped.privacy.com.de'},
+            {'type': 'piped', 'url': 'https://api.piped.ot.ax'},
+            {'type': 'invidious', 'url': 'https://iv.melmac.space'},
+            {'type': 'invidious', 'url': 'https://vid.puffyan.us'},
+            {'type': 'invidious', 'url': 'https://inv.nadeko.net'},
+            {'type': 'invidious', 'url': 'https://invidious.privacydev.net'},
         ])
         self.current_pwa_index = 0
 
@@ -85,16 +89,26 @@ class MusicStreamer:
         return {}
         
     def _load_cache_metadata(self) -> Dict:
-        """Загрузка метаданных кеша"""
+        """Загрузка метаданных кеша с резервным копированием при повреждении"""
         if self.cache_meta_file.exists():
             try:
                 with open(self.cache_meta_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                    if not isinstance(data, dict):
+                        raise ValueError("Metadata is not a dictionary")
                     # Обеспечиваем наличие ключей для сессии
                     if 'files' not in data:
                         return {'files': data, 'last_session': None}
                     return data
-            except:
+            except (json.JSONDecodeError, ValueError, Exception) as e:
+                # Резервная копия поврежденного файла
+                backup_path = self.cache_meta_file.with_suffix('.corrupted.json')
+                try:
+                    import shutil
+                    shutil.copy2(self.cache_meta_file, backup_path)
+                    print(f"\n⚠️ Метаданные повреждены. Резервная копия сохранена в: {backup_path.name}")
+                except:
+                    pass
                 return {'files': {}, 'last_session': None}
         return {'files': {}, 'last_session': None}
     
@@ -515,34 +529,57 @@ class MusicStreamer:
         return True
     
     def search(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Поиск музыки (сначала через PWA CLI, затем Python PWA API, затем yt-dlp)"""
+        """Поиск музыки (сначала через yt-putty, затем Python PWA API, затем yt-dlp)"""
         print(f"🔍 Поиск: {query}...", end=" ", flush=True)
         
-        # 1. Пробуем PWA CLI (Node.js) для агрегированного поиска (самый полный)
+        # 1. Пробуем yt-putty (Node.js) для агрегированного поиска (самый полный)
         try:
-            cli_path = Path(__file__).parent / "pwa" / "pwa-cli.js"
+            cli_path = Path(__file__).parent / "pwa" / "yt-putty.js"
             if cli_path.exists():
                 cmd = ['node', str(cli_path), 'search', query, '--json']
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 if result.returncode == 0:
-                    videos = json.loads(result.stdout)
-                    if videos:
-                        for v in videos:
-                            v['search_method'] = v.get('source', 'PWA')
-                            # Ensure URL is present for yt-dlp fallback compatibility
-                            if 'url' not in v and 'videoId' in v:
-                                # For YouTube sources
-                                if v.get('source') in ['YT', 'PI', 'IV', 'YouTube', 'Invidious', 'Piped']:
-                                    v['url'] = f"https://www.youtube.com/watch?v={v['videoId']}"
-                                # For Audiomack
-                                elif v.get('source') == 'AM':
-                                    v['url'] = f"https://audiomack.com/song/{v['videoId']}"
-                                # For SoundCloud
-                                elif v.get('source') == 'SC':
-                                    v['url'] = f"https://soundcloud.com/{v['videoId']}"
+                    try:
+                        videos = json.loads(result.stdout)
+                        if videos:
+                            validated_videos = []
+                            for v in videos:
+                                if not isinstance(v, dict): continue
+                                
+                                # Validate required fields
+                                video_id = v.get('videoId') or v.get('id')
+                                title = v.get('title') or "Unknown Track"
+                                
+                                if not video_id: continue
+                                
+                                v['videoId'] = video_id
+                                v['title'] = title
+                                v['search_method'] = v.get('source', 'yt-putty')
+                                
+                                # Ensure duration is an integer to avoid TUI crashes
+                                v['duration'] = self._parse_duration(v.get('duration', 0))
+                                
+                                # Ensure URL is present for yt-dlp fallback compatibility
+                                if 'url' not in v:
+                                    # For YouTube sources as defined in yt-putty.js
+                                    if v.get('source') in ['YT', 'PI', 'IV', 'YouTube', 'Invidious', 'Piped', 'yt-putty']:
+                                        v['url'] = f"https://www.youtube.com/watch?v={v['videoId']}"
+                                    # For Audiomack
+                                    elif v.get('source') == 'AM':
+                                        v['url'] = f"https://audiomack.com/song/{v['videoId']}"
+                                    # For SoundCloud
+                                    elif v.get('source') == 'SC':
+                                        v['url'] = f"https://soundcloud.com/{v['videoId']}"
+                                    else:
+                                        # Fallback default
+                                        v['url'] = f"https://www.youtube.com/watch?v={v['videoId']}"
+                                
+                                validated_videos.append(v)
 
-                        print(f"✅ Найдено (PWA-CLI): {len(videos)}")
-                        return videos[:max_results]
+                            print(f"✅ Найдено (yt-putty): {len(validated_videos)}")
+                            return validated_videos[:max_results]
+                    except json.JSONDecodeError:
+                        pass
         except Exception as e:
             pass
 
@@ -599,6 +636,21 @@ class MusicStreamer:
             print("❌ Error")
             return []
 
+    def _parse_duration(self, duration: Any) -> int:
+        """Parse duration to integer seconds"""
+        if duration is None: return 0
+        if isinstance(duration, (int, float)): return int(duration)
+        if isinstance(duration, str):
+            try:
+                parts = duration.split(':')
+                secs = 0
+                if len(parts) == 1: return int(duration)
+                if len(parts) == 2: secs = int(parts[0])*60 + int(parts[1])
+                elif len(parts) == 3: secs = int(parts[0])*3600 + int(parts[1])*60 + int(parts[2])
+                return secs
+            except: pass
+        return 0
+
     def _search_youtubei_python(self, query: str, max_results: int) -> List[Dict]:
         """Прямой поиск через YouTubei API на Python"""
         try:
@@ -633,7 +685,7 @@ class MusicStreamer:
                         'title': video.get('title', {}).get('runs', [{}])[0].get('text', 'Unknown'),
                         'videoId': video.get('videoId'),
                         'url': f"https://www.youtube.com/watch?v={video.get('videoId')}",
-                        'duration': video.get('lengthText', {}).get('simpleText', '0:00'),
+                        'duration': self._parse_duration(video.get('lengthText', {}).get('simpleText', '0:00')),
                         'uploader': video.get('ownerText', {}).get('runs', [{}])[0].get('text', 'Unknown')
                     })
                     if len(results) >= max_results + 10: break # Get a few more to filter
@@ -685,7 +737,7 @@ class MusicStreamer:
                             videos.append({
                                 'title': item.get('title'),
                                 'url': f"https://www.youtube.com/watch?v={item.get('url', '').split('v=')[-1]}",
-                                'duration': item.get('duration'),
+                                'duration': self._parse_duration(item.get('duration', 0)),
                                 'uploader': item.get('uploaderName', 'Unknown'),
                                 'video_id': item.get('url', '').split('v=')[-1]
                             })
@@ -693,7 +745,7 @@ class MusicStreamer:
                             videos.append({
                                 'title': item.get('title'),
                                 'url': f"https://www.youtube.com/watch?v={item.get('videoId')}",
-                                'duration': item.get('lengthSeconds'),
+                                'duration': self._parse_duration(item.get('lengthSeconds', 0)),
                                 'uploader': item.get('author', 'Unknown'),
                                 'video_id': item.get('videoId')
                             })
@@ -741,7 +793,9 @@ class MusicStreamer:
         """Форматирование длительности"""
         if seconds is None:
             return "LIVE"
-        minutes, secs = divmod(seconds, 60)
+        if not isinstance(seconds, (int, float)):
+            raise TypeError(f"Duration must be int or float, got {type(seconds)}")
+        minutes, secs = divmod(int(seconds), 60)
         hours, minutes = divmod(minutes, 60)
         return f"{hours}:{minutes:02d}:{secs:02d}" if hours > 0 else f"{minutes}:{secs:02d}"
     

@@ -14,8 +14,36 @@
             "url": "https://invidious.protokolla.fi"
         },
         {
+            "type": "invidious",
+            "url": "https://vid.puffyan.us"
+        },
+        {
+            "type": "invidious",
+            "url": "https://inv.nadeko.net"
+        },
+        {
+            "type": "invidious",
+            "url": "https://invidious.privacydev.net"
+        },
+        {
+            "type": "invidious",
+            "url": "https://invidious.nerdvpn.de"
+        },
+        {
+            "type": "invidious",
+            "url": "https://yewtu.be"
+        },
+        {
             "type": "piped",
             "url": "https://pipedapi.kavin.rocks"
+        },
+        {
+            "type": "piped",
+            "url": "https://api.piped.privacy.com.de"
+        },
+        {
+            "type": "piped",
+            "url": "https://api.piped.ot.ax"
         }
     ],
     "search_max_results": 10,

@@ -1,8 +1,13 @@
 import unittest
+import sys
 import os
 import json
 import shutil
 from pathlib import Path
+
+# Add root dir to path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 from streamer import MusicStreamer
 
 class TestStreamerFeatures(unittest.TestCase):
@@ -59,12 +64,19 @@ class TestStreamerFeatures(unittest.TestCase):
         self.assertTrue(new_status)
         self.assertTrue(self.streamer.get_track_stats(self.test_url)['is_disliked'])
         
-        # Like should be cleared when disliked
-        self.streamer.toggle_like(self.test_url) # Like it first
-        self.assertTrue(self.streamer.get_track_stats(self.test_url)['is_liked'])
-        self.streamer.toggle_dislike(self.test_url) # Then dislike it
+        # When disliked, toggle_like should remove dislike but stay neutral
+        self.streamer.toggle_like(self.test_url)
+        self.assertFalse(self.streamer.get_track_stats(self.test_url)['is_disliked'])
         self.assertFalse(self.streamer.get_track_stats(self.test_url)['is_liked'])
-        self.assertTrue(self.streamer.get_track_stats(self.test_url)['is_disliked'])
+        
+        # Second toggle_like should now set liked to True
+        self.streamer.toggle_like(self.test_url)
+        self.assertTrue(self.streamer.get_track_stats(self.test_url)['is_liked'])
+        
+        # When liked, toggle_dislike should remove like but stay neutral
+        self.streamer.toggle_dislike(self.test_url)
+        self.assertFalse(self.streamer.get_track_stats(self.test_url)['is_liked'])
+        self.assertFalse(self.streamer.get_track_stats(self.test_url)['is_disliked'])
 
     def test_search_structure(self):
         # Test that search returns the expected dictionary structure

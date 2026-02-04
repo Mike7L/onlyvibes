@@ -3,7 +3,7 @@
  * Uses Node's built-in assert module and fetch.
  */
 
-import { YouTubeiProvider, AudiomackProvider, SoundCloudProvider, PipedProvider, InvidiousProvider } from '../pwa-providers.js';
+import { YouTubeiProvider, AudiomackProvider, SoundCloudProvider, PipedProvider, InvidiousProvider } from '../lib/yt-putty/index.js';
 import assert from 'node:assert';
 
 async function testYouTubei() {

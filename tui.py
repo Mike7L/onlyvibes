@@ -39,7 +39,7 @@ class TUI:
         # Hide cursor initially
         curses.curs_set(0)
         self.stdscr.nodelay(True) # Non-blocking getch so we can update UI loop
-        self.stdscr.timeout(200) # Refresh every 200 ms
+        self.stdscr.timeout(50) # Refresh every 50 ms (20 FPS)
         self.stdscr.keypad(True)
         
         # Capture streamer output
@@ -236,7 +236,8 @@ class TUI:
         try:
             # First line: Title with duplicate indicator and Like/Dislike icons
             if 0 <= y < max_y:
-                 stats = self.streamer.get_track_stats(track['url'])
+                 # stats is already computed above at line 212
+
                  
                  icon_str = "   "
                  if stats.get('is_liked'):
@@ -250,7 +251,8 @@ class TUI:
                  source = track.get('search_method', 'YT')
                  source_str = f"[{source}] "
                  
-                 title = icon_str + " " + prefix + source_str + track['title'][:w-20-len(prefix)-len(source_str)]
+                 title_text = str(track.get('title', 'Unknown Track'))
+                 title = icon_str + " " + prefix + source_str + title_text[:w-20-len(prefix)-len(source_str)]
                  
                  # Draw icons with colors
                  if stats.get('is_liked'):
@@ -265,7 +267,15 @@ class TUI:
                  # Play count and duration
                  play_count = stats.get('play_count', 0)
                  count_str = f" {play_count}▶" if play_count > 0 else ""
-                 dur_str = self.streamer.format_duration(track.get('duration', 0))
+                 
+                 # Use .get() and fallback for duration
+                 raw_dur = track.get('duration', 0)
+                 try:
+                     dur_val = raw_dur if isinstance(raw_dur, (int, float)) else self.streamer._parse_duration(raw_dur)
+                     dur_str = self.streamer.format_duration(dur_val)
+                 except:
+                     dur_str = "0:00"
+                 
                  self.stdscr.addstr(y, w - len(dur_str) - len(count_str) - 1, count_str, curses.A_DIM)
                  self.stdscr.addstr(y, w - len(dur_str) - 1, dur_str, color_attr)
                  
@@ -691,6 +701,11 @@ def main():
         curses.wrapper(lambda stdscr: TUI(stdscr).run())
     except KeyboardInterrupt:
         pass
+    except Exception:
+        import traceback
+        with open("tui_crash.log", "w") as f:
+            f.write(traceback.format_exc())
+        raise
 
 if __name__ == "__main__":
     main()

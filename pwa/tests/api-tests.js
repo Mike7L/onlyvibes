@@ -2,12 +2,12 @@
  * PwaApi Integration Tests
  */
 
-import { PwaApi } from '../pwa-api.js';
+import { YtPuttyApi } from '../lib/yt-putty/index.js';
 import assert from 'node:assert';
 
 async function testAggregation() {
-    console.log("Testing PwaApi Aggregation...");
-    const api = new PwaApi();
+    console.log("Testing YtPuttyApi Aggregation...");
+    const api = new YtPuttyApi();
     const results = await api.search("Michael Jackson");
 
     assert(results.length > 0, "Should have aggregated results");
@@ -20,8 +20,8 @@ async function testAggregation() {
 }
 
 async function testDeduplication() {
-    console.log("Testing PwaApi Deduplication...");
-    const api = new PwaApi();
+    console.log("Testing YtPuttyApi Deduplication...");
+    const api = new YtPuttyApi();
 
     // Mocking providers to return same result if needed, 
     // but here we check the unique logic in the class

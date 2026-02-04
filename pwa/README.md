@@ -48,7 +48,8 @@ php -S localhost:8080
 ✅ **Search music** - YouTube integration
 ✅ **Play audio** - Background playback
 ✅ **Track list** - Save and manage tracks
-✅ **Persistent storage** - Tracks saved in localStorage
+✅ **Persistent storage** - Tracks saved in localStorage/IndexedDB
+✅ **yt-putty engine** - Shared library for search & resolve (`lib/yt-putty`)
 
 ---
 
@@ -112,7 +113,16 @@ vercel
 ### No search results?
 - **Issue:** CORS proxy blocked
 - **Fix:** Use backend server or different proxy
-- Check browser console for errors
+---
+
+## 🏗️ Library: yt-putty
+
+Core logic is now a standalone-like JS library:
+- **`pwa/lib/yt-putty/index.js`** - Entry point
+- **`pwa/lib/yt-putty/api.js`** - Aggregator API (`YtPuttyApi`)
+- **`pwa/lib/yt-putty/providers.js`** - Individual providers (YouTube, SoundCloud, etc.)
+
+Used by both PWA UI and CLI tool (`yt-putty.js`).
 
 ---
 

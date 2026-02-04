@@ -1,6 +1,11 @@
 import json
 import os
+import sys
 from pathlib import Path
+
+# Add root dir to path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 from streamer import MusicStreamer
 
 def test_duration_filtering():

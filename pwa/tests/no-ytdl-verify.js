@@ -4,7 +4,7 @@
  * that no 'yt-dlp' or 'ytdl' command is ever called or required.
  */
 
-import { PwaApi } from '../pwa-api.js';
+import { YtPuttyApi } from '../lib/yt-putty/index.js';
 import { execSync } from 'child_process';
 
 async function verify() {
@@ -18,9 +18,9 @@ async function verify() {
         console.log("[i] ytdl/yt-dlp not found in PATH. Perfect for this test.");
     }
 
-    // 2. Run PwaApi Search
-    const api = new PwaApi();
-    console.log("[i] Testing PwaApi search...");
+    // 2. Run YtPuttyApi Search
+    const api = new YtPuttyApi();
+    console.log("[i] Testing YtPuttyApi search...");
     const results = await api.search("testing pwa");
 
     if (results.length > 0) {

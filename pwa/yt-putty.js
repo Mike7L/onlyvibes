@@ -5,7 +5,7 @@
  * Provides search and download capabilities from the terminal.
  */
 
-import { PwaApi } from './pwa-api.js';
+import { YtPuttyApi } from './lib/yt-putty/index.js';
 import fs from 'fs';
 import path from 'path';
 import { finished } from 'stream/promises';
@@ -20,7 +20,7 @@ try {
     console.warn("\x1b[33m[!] Could not load config.json, using defaults.\x1b[0m");
 }
 
-const api = new PwaApi(config);
+const api = new YtPuttyApi(config);
 
 async function downloadTrack(videoId, title, source = 'YT') {
     console.error(`\x1b[36m[i] Resolving stream for: ${title} (Source: ${source})...\x1b[0m`);
@@ -80,10 +80,10 @@ async function main() {
         const source = args.includes('--source') ? args[args.indexOf('--source') + 1] : 'YT';
         await downloadTrack(videoId, title, source);
     } else {
-        console.log("OnlyMusic PWA CLI");
+        console.log("yt-putty CLI");
         console.log("Usage:");
-        console.log("  node pwa-cli.js search <query>       - Search for tracks");
-        console.log("  node pwa-cli.js download <id> [name] - Download a specific track");
+        console.log("  node yt-putty.js search <query>       - Search for tracks");
+        console.log("  node yt-putty.js download <id> [name] - Download a specific track");
         process.exit(1);
     }
 }

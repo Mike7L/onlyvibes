@@ -4,6 +4,20 @@
 echo "=== Starting OnlyMusic Test Suite ==="
 echo
 
+if [[ "$1" == "--integration" ]]; then
+    echo "--- Running Integration Tests ---"
+    export PYTHONPATH=$PYTHONPATH:.
+    pytest tests/integration/ -v
+    PY_INT_STATUS=$?
+    if [ $PY_INT_STATUS -ne 0 ]; then
+        echo "❌ Integration Tests FAILED"
+        exit 1
+    fi
+    echo "✅ Integration Tests PASSED"
+    exit 0
+fi
+echo
+
 # 1. Node.js Provider Tests
 echo "--- Running Node.js Provider Tests ---"
 cd pwa && node tests/provider-tests.js

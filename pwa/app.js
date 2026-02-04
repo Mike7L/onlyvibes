@@ -1,4 +1,4 @@
-// OnlyMusic PWA - Main Application Logic (Material Design Version)
+import { InvidiousProvider, PipedProvider, YouTubeiProvider, YtPuttyProvider, AIGalleryProvider, CorsProxy } from './lib/yt-putty/index.js';
 
 class MusicApp {
     constructor() {
@@ -16,30 +16,39 @@ class MusicApp {
         this.registerServiceWorker();
         this.loadCachedTracks();
 
-        // MIXED API Instances (Piped & Invidious) - Prioritizing verified working instances
-        this.apiInstances = [
-            { type: 'invidious', url: 'https://iv.melmac.space' },
-            { type: 'invidious', url: 'https://invidious.reallyaweso.me' },
-            { type: 'invidious', url: 'https://invidious.protokolla.fi' }, // Captcha protected but might work with cookies later
-            { type: 'piped', url: 'https://pipedapi.kavin.rocks' }, // Fallback
-        ];
-        this.currentInstanceIndex = 0;
+        // Initialize Providers
+        this.providers = [];
+        this.initProviders();
+
         this.fetchConfig();
+    }
+
+    initProviders(config = {}) {
+        // Initialize providers with optional config
+        // Order matters: Invidious -> Piped -> Fallback
+        this.providers = [
+            new InvidiousProvider(config),
+            new PipedProvider(config),
+            new YtPuttyProvider(config),
+            new AIGalleryProvider(config)
+        ];
+        this.renderGalleries();
+        console.log(`[i] Initialized ${this.providers.length} providers`);
     }
 
     async fetchConfig() {
         try {
-            // Attempt to load external config if available on the server
-            const res = await fetch('/config.json');
+            // Attempt to load external config from relative path
+            const res = await fetch('./config.json');
             if (res.ok) {
                 const config = await res.json();
-                if (config.api_instances) {
-                    this.apiInstances = config.api_instances;
-                    console.log("[i] Loaded external API configuration");
-                }
+                this.initProviders(config);
+                console.log("[i] Loaded external API configuration");
+            } else {
+                console.warn("[!] Config not found, using defaults");
             }
         } catch (e) {
-            // Fallback to hardcoded defaults already in constructor
+            console.warn("[!] Failed to load config:", e);
         }
     }
 
@@ -109,8 +118,8 @@ class MusicApp {
         this.nowPlayingTitle = document.getElementById('nowPlayingTitle');
         this.nowPlayingTime = document.getElementById('nowPlayingTime');
         this.statusMsg = document.getElementById('statusMsg');
+        this.galleriesContainer = document.getElementById('galleriesContainer');
 
-        // this.searchToggleBtn = document.getElementById('searchToggleBtn'); // REMOVED
         this.searchBarContainer = document.getElementById('searchBarContainer');
         this.initTerminal();
     }
@@ -124,8 +133,8 @@ class MusicApp {
 
         this.terminal = new VanillaTerminal({
             container: '#terminal-container',
-            welcome: 'OnlyMusic CLI v1.1.0 (TUI Mode)<br>Use Arrows to navigate, Enter to search/play, Tab to play.',
-            prompt: 'user@onlymusic:~$ ',
+            welcome: 'yt-putty CLI v1.1.0 (TUI Mode)<br>Use Arrows to navigate, Enter to search/play, Tab to play.',
+            prompt: 'user@yt-putty:~$ ',
             onInput: (cmd) => this.handleTerminalCommand(cmd),
             onKeyDown: (e) => this.handleTerminalKeyDown(e)
         });
@@ -197,8 +206,6 @@ class MusicApp {
                 break;
             case 'Delete':
             case 'Backspace':
-                // Only handle Delete/Backspace as "Remove Track" if Ctrl or if it's specialized?
-                // In tui.py it's Delete. Let's stick to Delete.
                 if (e.key === 'Delete') {
                     e.preventDefault();
                     this.deleteTrack(this.terminalSelectionIndex);
@@ -230,7 +237,7 @@ class MusicApp {
         if (this.terminalContainer.classList.contains('hidden')) return;
 
         this.terminal.clear();
-        this.terminal.print('OnlyMusic CLI v1.1.0 - TUI Mode');
+        this.terminal.print('yt-putty CLI v1.1.0 - TUI Mode');
         this.terminal.print('----------------------------------');
 
         if (this.tracks.length === 0) {
@@ -292,13 +299,8 @@ class MusicApp {
                     this.searchInput.value = argString;
                     this.search().then(() => {
                         if (this.tracks.length > 0) {
-                            this.playTrack(this.tracks.length - 1); // Play the last added track (usually the result search appends?)
-                            // Wait, search implementation appends.
-                            // Let's actually refine search to just play first result if empty or something.
-                            // For now, standard behavior: search adds to list.
-                            // Let's try to play the first NEW result.
                             this.terminal.print(`Found ${this.tracks.length} tracks. Playing...`);
-                            this.playTrack(this.tracks.length - 1); // Play the most recently added for "play [song]" feel
+                            this.playTrack(this.tracks.length - 1);
                         } else {
                             this.terminal.print('No results found.');
                         }
@@ -406,11 +408,6 @@ class MusicApp {
             } catch (e) {
                 console.error('SW Registration Failed:', e);
             }
-
-            // Reload when new SW is activated
-            navigator.serviceWorker.addEventListener('controllerchange', () => {
-                window.location.reload();
-            });
         }
     }
 
@@ -454,27 +451,18 @@ class MusicApp {
         localStorage.setItem('onlymusic_tracks', JSON.stringify(this.tracks));
     }
 
-    rotateInstance() {
-        this.currentInstanceIndex = (this.currentInstanceIndex + 1) % this.apiInstances.length;
-        console.log(`Rotated to instance: ${this.apiInstances[this.currentInstanceIndex].url}`);
-    }
-
+    // New Modular Search Logic
     async search() {
         const query = this.searchInput.value.trim();
         if (!query) return;
 
         this.showStatus('Searching...');
-        // if (this.searchBarContainer) this.searchBarContainer.classList.remove('active'); // REMOVED
 
-        for (let i = 0; i < this.apiInstances.length; i++) {
-            const instance = this.apiInstances[this.currentInstanceIndex];
+        for (const provider of this.providers) {
+            if (!provider.canSearch()) continue;
+
             try {
-                let results = [];
-                if (instance.type === 'piped') {
-                    results = await this.searchPiped(instance.url, query);
-                } else {
-                    results = await this.searchInvidious(instance.url, query);
-                }
+                const results = await provider.search(query);
 
                 if (results && results.length > 0) {
                     let addedCount = 0;
@@ -489,48 +477,22 @@ class MusicApp {
                         this.saveTracks();
                         this.renderTracks();
                         this.renderCLITUI();
-                        this.showStatus(`Added ${addedCount} tracks`);
+                        this.showStatus(`Added ${addedCount} tracks from ${provider.name}`);
                     } else {
-                        this.showStatus('Already in playlist');
+                        this.showStatus(`Already in playlist (${provider.name})`);
                     }
                     return; // Succesful search
-                } else {
-                    throw new Error("No results");
                 }
             } catch (error) {
-                console.warn(`Search failed on ${instance.url}:`, error.message);
-                this.rotateInstance();
+                console.warn(`Search failed on ${provider.name}:`, error.message);
+                if (provider.rotate) {
+                    provider.rotate();
+                    // Optional: Try again with new instance?
+                    // For now, let's just move to next provider to avoid infinite loops
+                }
             }
         }
         this.showStatus('All APIs failed');
-    }
-
-    async searchPiped(instance, query) {
-        const url = `${instance}/search?q=${encodeURIComponent(query)}&filter=music_songs`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        return (data.items || []).map(item => ({
-            title: item.title,
-            videoId: item.url.split('v=')[1],
-            duration: item.duration,
-            uploader: item.uploaderName,
-            thumbnail: item.thumbnail
-        })).slice(0, 10);
-    }
-
-    async searchInvidious(instance, query) {
-        const url = `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        return Array.isArray(data) ? data.slice(0, 10).map(item => ({
-            title: item.title,
-            videoId: item.videoId,
-            duration: item.lengthSeconds,
-            uploader: item.author,
-            thumbnail: `https://img.youtube.com/vi/${item.videoId}/mqdefault.jpg`
-        })) : [];
     }
 
     async renderTracks() {
@@ -547,8 +509,10 @@ class MusicApp {
             const div = document.createElement('div');
             div.className = `track-item ${index === this.currentTrackIndex ? 'playing' : ''}`;
 
+            const thumbnailStyle = track.thumbnail ? `background-image: url('${track.thumbnail}'); background-size: cover;` : '';
+
             div.innerHTML = `
-                <div class="album-art-placeholder" style="${track.thumbnail ? `background-image: url('${track.thumbnail}'); background-size: cover;` : ''}">
+                <div class="album-art-placeholder" style="${thumbnailStyle}">
                     ${!track.thumbnail ? `<span class="material-symbols-rounded">${isCached ? 'download_done' : 'music_note'}</span>` : (isCached ? '<span class="material-symbols-rounded" style="background:rgba(0,0,0,0.5); border-radius:12px; padding:4px;">download_done</span>' : '')}
                 </div>
                 <div class="track-info">
@@ -630,50 +594,39 @@ class MusicApp {
         }
     }
 
+    // New Modular Resolve Logic
     async resolveStream(videoId) {
-        for (let i = 0; i < this.apiInstances.length; i++) {
-            const instance = this.apiInstances[this.currentInstanceIndex];
+        for (const provider of this.providers) {
+            if (!provider.canResolve()) continue;
+
             try {
-                let streamUrl = null;
-                if (instance.type === 'piped') {
-                    streamUrl = await this.resolvePipedStream(instance.url, videoId);
-                } else {
-                    streamUrl = await this.resolveInvidiousStream(instance.url, videoId);
+                const streamUrl = await provider.resolve(videoId);
+                if (streamUrl) {
+                    console.log(`[i] Resolved stream from ${provider.name}`);
+                    return streamUrl;
                 }
-                if (streamUrl) return streamUrl;
             } catch (e) {
-                console.warn(`Resolve failed on ${instance.url}:`, e.message);
-                this.rotateInstance();
+                console.warn(`Resolve failed on ${provider.name}:`, e.message);
+                if (provider.rotate) {
+                    provider.rotate();
+                }
             }
-        }
-        return null;
-    }
-
-    async resolvePipedStream(instance, videoId) {
-        const res = await fetch(`${instance}/streams/${videoId}`, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) return null;
-
-        const data = await res.json();
-        const streams = (data.audioStreams || []).sort((a, b) => b.bitrate - a.bitrate);
-        return streams.length > 0 ? streams[0].url : null;
-    }
-
-    async resolveInvidiousStream(instance, videoId) {
-        const res = await fetch(`${instance}/api/v1/videos/${videoId}`, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) return null;
-        const data = await res.json();
-        if (data.adaptiveFormats) {
-            // Find the best audio-only stream
-            const audio = data.adaptiveFormats.filter(f => f.type?.startsWith('audio')).sort((a, b) => b.bitrate - a.bitrate)[0];
-            return audio ? audio.url : null;
         }
         return null;
     }
 
     async cacheInBackground(videoId, url, isManual = false) {
         try {
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            let response;
+            try {
+                response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            } catch (directError) {
+                console.warn("Direct fetch failed, trying proxy:", directError.message);
+                const proxyUrl = CorsProxy.get(url);
+                response = await fetch(proxyUrl);
+                if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`);
+            }
 
             const blob = await response.blob();
             await this.saveToDBCache(videoId, blob);
@@ -719,8 +672,7 @@ class MusicApp {
         if (this.nowPlayingTime) {
             this.nowPlayingTime.textContent = `${this.formatTime(this.audioPlayer.currentTime)} / ${this.formatTime(this.audioPlayer.duration)}`;
         }
-        // Throttle terminal update slightly or just do it? Terminal is clear/print, maybe every second?
-        // Let's do it every second for better performance
+        // Throttle terminal update slightly
         const now = Date.now();
         if (!this._lastTerminalUpdate || now - this._lastTerminalUpdate > 1000) {
             this.renderCLITUI();
@@ -744,6 +696,48 @@ class MusicApp {
         const track = this.tracks[this.currentTrackIndex];
         if (this.nowPlayingTitle) this.nowPlayingTitle.textContent = track ? track.title : "Not Playing";
         this.renderCLITUI();
+    }
+
+    renderGalleries() {
+        if (!this.galleriesContainer) return;
+        const aiProvider = this.providers.find(p => p instanceof AIGalleryProvider);
+        if (!aiProvider) return;
+
+        const galleries = aiProvider.getGalleries();
+        this.galleriesContainer.innerHTML = galleries.map(g => `
+                <div class="gallery-chip" data-id="${g.id}">
+                    <span class="material-symbols-rounded">${g.icon}</span>
+                    ${g.title}
+                </div>
+            `).join('');
+
+        this.galleriesContainer.querySelectorAll('.gallery-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                const id = chip.dataset.id;
+                this.loadGallery(id);
+
+                // Toggle active state
+                this.galleriesContainer.querySelectorAll('.gallery-chip').forEach(c => c.classList.remove('active'));
+                chip.classList.add('active');
+            });
+        });
+    }
+
+    async loadGallery(id) {
+        this.showStatus(`Loading AI Gallery: ${id}...`);
+        const aiProvider = this.providers.find(p => p instanceof AIGalleryProvider);
+        if (!aiProvider) return;
+
+        try {
+            const results = await aiProvider.search(id);
+            this.tracks = results;
+            this.renderTracks();
+            this.saveTracks();
+            this.showStatus(`Loaded ${results.length} tracks`);
+        } catch (e) {
+            console.error("Gallery Load Error:", e);
+            this.showStatus("Failed to load gallery");
+        }
     }
 
     showStatus(msg, dur = 3000) {
@@ -772,7 +766,6 @@ class MusicApp {
     }
 }
 
-// Make app instance global
 // Make app instance global
 // Wait for DOM
 document.addEventListener('DOMContentLoaded', () => {

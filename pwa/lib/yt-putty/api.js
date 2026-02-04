@@ -1,10 +1,10 @@
 /**
- * PwaApi - Modular Music API Aggregator
+ * YtPuttyApi - Modular Music API Aggregator
  */
 
-import { YouTubeiProvider, AudiomackProvider, PipedProvider, InvidiousProvider, SoundCloudProvider } from './pwa-providers.js';
+import { YouTubeiProvider, AudiomackProvider, PipedProvider, InvidiousProvider, SoundCloudProvider, YtPuttyProvider, AIGalleryProvider } from './providers.js';
 
-export class PwaApi {
+export class YtPuttyApi {
     constructor(config = {}) {
         this.config = config;
         this.providers = {
@@ -12,7 +12,8 @@ export class PwaApi {
             am: new AudiomackProvider(config),
             pi: new PipedProvider(config),
             iv: new InvidiousProvider(config),
-            sc: new SoundCloudProvider(config)
+            sc: new SoundCloudProvider(config),
+            ai: new AIGalleryProvider(config)
         };
     }
 
@@ -20,7 +21,7 @@ export class PwaApi {
      * Search across all available providers and aggregate results
      */
     async search(query) {
-        console.error(`[PwaApi] Aggregating search for: ${query}`);
+        console.error(`[YtPuttyApi] Aggregating search for: ${query}`);
 
         const searchPromises = Object.entries(this.providers)
             .filter(([_, provider]) => provider.canSearch())
@@ -29,7 +30,7 @@ export class PwaApi {
                     const results = await provider.search(query);
                     return results.map(r => ({ ...r, provider: provider.name }));
                 } catch (e) {
-                    console.warn(`[PwaApi] Provider ${key} failed:`, e.message);
+                    console.warn(`[YtPuttyApi] Provider ${key} failed:`, e.message);
                     if (provider.rotate) provider.rotate();
                     return [];
                 }

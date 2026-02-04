@@ -3,6 +3,19 @@
  * Implements various music sources for search and streaming.
  */
 
+export const CorsProxy = {
+    proxies: [
+        'https://api.allorigins.win/raw?url=',
+        // 'https://corsproxy.io/?', // 403 Forbidden on some domains
+    ],
+    get(url) {
+        // Randomly select a proxy to distribute load? Or iterate?
+        // Simple random for now.
+        const proxy = this.proxies[Math.floor(Math.random() * this.proxies.length)];
+        return `${proxy}${encodeURIComponent(url)}`;
+    }
+};
+
 export class BaseProvider {
     constructor(config = {}) {
         this.config = config;
@@ -23,7 +36,7 @@ export class BaseProvider {
  * YouTubeiProvider - Direct access to YouTube's internal API
  */
 export class YouTubeiProvider extends BaseProvider {
-    constructor(config) {
+    constructor(config = {}) {
         super(config);
         this.name = 'YouTube';
         this.baseUrl = 'https://www.youtube.com/youtubei/v1';
@@ -75,10 +88,94 @@ export class YouTubeiProvider extends BaseProvider {
 }
 
 /**
+ * YouTubeWebProvider - Client-side HTML parsing
+ */
+export class YtPuttyProvider extends BaseProvider {
+    constructor(config = {}) {
+        super(config);
+        this.name = 'yt-putty';
+        this.capabilities.search = true;
+        this.capabilities.resolve = true;
+    }
+
+    async search(query) {
+        try {
+            const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+            const url = CorsProxy.get(ytUrl);
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const html = await res.text();
+
+            // Extract ytInitialData
+            const match = html.match(/var ytInitialData = ({.*?});/s);
+            if (!match) return [];
+            const data = JSON.parse(match[1]);
+
+            const remoteContents = data.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
+            if (!remoteContents) return [];
+
+            const itemSection = remoteContents.find(c => c.itemSectionRenderer)?.itemSectionRenderer;
+            const contents = itemSection?.contents || [];
+
+            return contents
+                .filter(item => item.videoRenderer)
+                .map(item => {
+                    const video = item.videoRenderer;
+                    return {
+                        title: video.title.runs[0].text,
+                        videoId: video.videoId,
+                        duration: video.lengthText?.simpleText || '0:00',
+                        uploader: video.ownerText.runs[0].text,
+                        thumbnail: video.thumbnail.thumbnails[0].url,
+                        source: 'yt-putty',
+                        provider: this.name
+                    };
+                }).slice(0, 10);
+
+        } catch (e) {
+            console.warn(`[YouTubeWeb] Search failed:`, e.message);
+            return [];
+        }
+    }
+
+    async resolve(videoId) {
+        try {
+            const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+            const url = CorsProxy.get(ytUrl);
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const html = await res.text();
+
+            // Extract ytInitialPlayerResponse
+            const match = html.match(/var ytInitialPlayerResponse = ({.*?});/s);
+            if (!match) return null;
+            const data = JSON.parse(match[1]);
+
+            if (data.playabilityStatus?.status !== 'OK') {
+                console.warn(`[YouTubeWeb] Video unavailable: ${data.playabilityStatus?.reason}`);
+                return null;
+            }
+
+            const adaptiveFormats = data.streamingData?.adaptiveFormats || [];
+            // Find best audio
+            const audio = adaptiveFormats
+                .filter(f => f.mimeType.includes('audio'))
+                .sort((a, b) => b.bitrate - a.bitrate)[0];
+
+            return audio ? audio.url : null;
+        } catch (e) {
+            console.warn(`[YouTubeWeb] Resolve failed:`, e.message);
+            return null;
+        }
+    }
+}
+
+
+/**
  * AudiomackProvider - Public API for Audiomack
  */
 export class AudiomackProvider extends BaseProvider {
-    constructor(config) {
+    constructor(config = {}) {
         super(config);
         this.name = 'Audiomack';
         this.capabilities.search = true;
@@ -110,11 +207,13 @@ export class AudiomackProvider extends BaseProvider {
  * PipedProvider - Provider for Piped API instances
  */
 export class PipedProvider extends BaseProvider {
-    constructor(config) {
+    constructor(config = {}) {
         super(config);
         this.name = 'Piped';
         this.instances = config.api_instances?.filter(i => i.type === 'piped') || [
-            { url: 'https://pipedapi.kavin.rocks' }
+            { url: 'https://pipedapi.kavin.rocks' },
+            { url: 'https://api.piped.privacy.com.de' },
+            { url: 'https://api.piped.ot.ax' }
         ];
         this.currentIndex = 0;
         this.capabilities.search = true;
@@ -155,11 +254,14 @@ export class PipedProvider extends BaseProvider {
  * InvidiousProvider - Provider for Invidious API instances
  */
 export class InvidiousProvider extends BaseProvider {
-    constructor(config) {
+    constructor(config = {}) {
         super(config);
         this.name = 'Invidious';
         this.instances = config.api_instances?.filter(i => i.type === 'invidious') || [
-            { url: 'https://iv.melmac.space' }
+            { url: 'https://iv.melmac.space' },
+            { url: 'https://vid.puffyan.us' },
+            { url: 'https://inv.nadeko.net' },
+            { url: 'https://invidious.privacydev.net' }
         ];
         this.currentIndex = 0;
         this.capabilities.search = true;
@@ -203,7 +305,7 @@ export class InvidiousProvider extends BaseProvider {
  * SoundCloudProvider - Direct access to SoundCloud search
  */
 export class SoundCloudProvider extends BaseProvider {
-    constructor(config) {
+    constructor(config = {}) {
         super(config);
         this.name = 'SoundCloud';
         this.clientId = null;
@@ -250,5 +352,47 @@ export class SoundCloudProvider extends BaseProvider {
             console.error("[SoundCloud] Search failed:", e);
             return [];
         }
+    }
+}
+
+/**
+ * AIGalleryProvider - Curated AI Music Galleries
+ */
+export class AIGalleryProvider extends BaseProvider {
+    constructor(config = {}) {
+        super(config);
+        this.name = 'AI Gallery';
+        this.capabilities.search = true;
+        this.capabilities.resolve = false; // Delegates to other providers
+
+        // Curated galleries (Playlists or search aliases)
+        this.galleries = [
+            { id: 'trending_suno', title: 'Suno Trending', query: 'Suno AI Trending', icon: 'auto_awesome' },
+            { id: 'top_udio', title: 'Udio Top', query: 'Udio AI Best', icon: 'bolt' },
+            { id: 'ai_lofi', title: 'AI Lofi Beats', query: 'AI Lofi Hip Hop', icon: 'coffee' },
+            { id: 'ai_synthwave', title: 'AI Synthwave', query: 'AI Synthwave Retro', icon: 'wb_sunny' }
+        ];
+    }
+
+    getGalleries() {
+        return this.galleries;
+    }
+
+    async search(query) {
+        // If the query matches a gallery ID, use the gallery's specific query
+        const gallery = this.galleries.find(g => g.id === query);
+        const searchQuery = gallery ? gallery.query : query;
+
+        // Use YouTubeiProvider logic to fetch results for the gallery
+        // In a real app, this might fetch from a dedicated AI feed API
+        const yt = new YouTubeiProvider(this.config);
+        const results = await yt.search(searchQuery);
+
+        return results.map(r => ({
+            ...r,
+            source: 'AI',
+            provider: this.name,
+            galleryId: gallery ? gallery.id : 'custom'
+        }));
     }
 }
