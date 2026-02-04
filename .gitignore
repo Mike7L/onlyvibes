@@ -8,4 +8,6 @@ env/
 venv/
 *.egg-info/
 dist/
-\n# Music cache\nmusic_cache/
+
+# Music cache
+music_cache/
