@@ -1,0 +1,35 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run All Tests",
+            "type": "shell",
+            "command": "./run_tests.sh",
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": true,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run PWA API Tests",
+            "type": "shell",
+            "command": "cd pwa && node tests/api-tests.js",
+            "group": "test"
+        },
+        {
+            "label": "Verify PWA ytdl Independence",
+            "type": "shell",
+            "command": "cd pwa && node tests/no-ytdl-verify.js",
+            "group": "test"
+        }
+    ]
+}

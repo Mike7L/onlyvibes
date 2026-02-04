@@ -556,12 +556,16 @@ class MusicApp {
                     <div class="track-artist">${isCached ? '💾 ' : ''}${this.formatDuration(track.duration)} • ${track.uploader}</div>
                 </div>
                 <div class="track-actions">
-                    ${isCached ? `
-                        <button class="icon-btn" onclick="event.stopPropagation(); app.deleteFromDBCache('${track.videoId}');">
-                            <span class="material-symbols-rounded" style="color: #4CAF50">delete</span>
+                    ${!isCached ? `
+                        <button class="icon-btn download-btn" onclick="event.stopPropagation(); app.downloadTrack(${index});" title="Download for offline">
+                            <span class="material-symbols-rounded">download</span>
                         </button>
-                    ` : ''}
-                    <button class="icon-btn" onclick="event.stopPropagation(); app.deleteTrack(${index});">
+                    ` : `
+                        <button class="icon-btn delete-cache-btn" onclick="event.stopPropagation(); app.deleteFromDBCache('${track.videoId}');" title="Remove from cache">
+                            <span class="material-symbols-rounded" style="color: var(--accent-secondary)">delete</span>
+                        </button>
+                    `}
+                    <button class="icon-btn remove-track-btn" onclick="event.stopPropagation(); app.deleteTrack(${index});" title="Remove from playlist">
                          <span class="material-symbols-rounded">close</span>
                     </button>
                 </div>
@@ -569,6 +573,22 @@ class MusicApp {
 
             div.addEventListener('click', () => this.playTrack(index));
             this.trackList.appendChild(div);
+        }
+    }
+
+    async downloadTrack(index) {
+        if (index < 0 || index >= this.tracks.length) return;
+        const track = this.tracks[index];
+        this.showStatus(`Downloading ${track.title}...`);
+
+        try {
+            const streamUrl = await this.resolveStream(track.videoId);
+            if (!streamUrl) throw new Error('Could not resolve stream');
+
+            await this.cacheInBackground(track.videoId, streamUrl, true);
+        } catch (error) {
+            this.showStatus('Download failed');
+            console.error(error);
         }
     }
 
@@ -650,18 +670,20 @@ class MusicApp {
         return null;
     }
 
-    async cacheInBackground(videoId, url) {
+    async cacheInBackground(videoId, url, isManual = false) {
         try {
-            // Check if we can fetch it (CORS might block specific streams depending on Piped instance config)
-            // But Piped proxies usually allow CORS.
             const response = await fetch(url);
-            if (!response.ok) return;
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
             const blob = await response.blob();
             await this.saveToDBCache(videoId, blob);
             this.renderTracks(); // Update UI
-            console.log("Cached track in background:", videoId);
-        } catch (e) { console.warn("Cache failed:", e.message); }
+            console.log("Cached track:", videoId);
+            if (isManual) this.showStatus('Saved to offline 💾');
+        } catch (e) {
+            console.warn("Cache failed:", e.message);
+            if (isManual) this.showStatus('Download failed (CORS?)');
+        }
     }
 
     togglePlayPause() {

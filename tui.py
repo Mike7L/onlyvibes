@@ -16,6 +16,7 @@ KEYBOARD SHORTCUTS:
     
   Management:
     Delete/Ctrl-X   - Remove track from list and cache
+    m               - Set maximum track duration (minutes)
 """
 import curses
 import locale
@@ -283,12 +284,12 @@ class TUI:
             # Help line with keyboard shortcuts
             self.stdscr.move(help_y, 0)
             self.stdscr.clrtoeol()
-            help_text = "↑/↓:Navigate  Enter:Search/Play  Tab:Play  ←/→:Seek±5s  Del:Remove  Esc:Clear/Exit"
+            help_text = "↑/↓:Nav  Enter:Srch/Pl  Tab:Pl  ←/→:Seek  Del:Rm  m:MaxDur  Esc:Exit"
             if len(help_text) <= max_x:
                 self.stdscr.addstr(help_y, 0, help_text, curses.A_DIM)
             else:
                 # Shortened version for narrow terminals
-                help_text = "↑/↓  Enter:Search/Play  Tab:Play  ←/→:Seek  Del:Remove"
+                help_text = "↑/↓  Ent:Sr/Pl  Tab:Pl  ←/→:Sk  Del:Rm  m:Dur"
                 self.stdscr.addstr(help_y, 0, help_text[:max_x-1], curses.A_DIM)
             
             # Clear input line
@@ -415,6 +416,9 @@ class TUI:
                 if 0 <= self.selection_index < len(self.tracks):
                     track = self.tracks[self.selection_index]
                     self.streamer.toggle_dislike(track['url'])
+
+            elif key == ord('m'):
+                self.set_max_duration()
 
             elif key == 27: # Esc
                 if self.input_buffer:
@@ -620,6 +624,60 @@ class TUI:
              self.selection_index = len(self.tracks) - 1
         if self.selection_index < 0 and self.tracks:
              self.selection_index = 0
+
+    def set_max_duration(self):
+        """Интерактивная установка максимальной длительности"""
+        max_y, max_x = self.stdscr.getmaxyx()
+        input_y = max_y - 1
+        prompt = "Max Duration (min, 0 for off): "
+        
+        self.stdscr.move(input_y, 0)
+        self.stdscr.clrtoeol()
+        self.stdscr.addstr(input_y, 0, prompt, curses.A_BOLD)
+        curses.curs_set(1)
+        self.stdscr.refresh()
+        
+        # Simple input loop
+        dur_input = ""
+        while True:
+            k = self.stdscr.getch()
+            if k == 10: # Enter
+                break
+            elif k == 27: # Esc
+                dur_input = None
+                break
+            elif k in (curses.KEY_BACKSPACE, 127, 8):
+                dur_input = dur_input[:-1]
+            elif ord('0') <= k <= ord('9'):
+                dur_input += chr(k)
+            
+            # Redraw input
+            self.stdscr.move(input_y, len(prompt))
+            self.stdscr.clrtoeol()
+            self.stdscr.addstr(input_y, len(prompt), dur_input, curses.color_pair(2))
+            self.stdscr.refresh()
+
+        if dur_input is not None:
+            try:
+                mins = int(dur_input)
+                secs = mins * 60
+                self.streamer.config["max_duration"] = secs
+                
+                # Save to config.json
+                config_path = Path(__file__).parent / "config.json"
+                try:
+                    with open(config_path, 'w') as f:
+                        json.dump(self.streamer.config, f, indent=4)
+                except: pass
+                
+                if mins == 0:
+                    self.msg = "Max duration disabled"
+                else:
+                    self.msg = f"Max duration set to {mins} min"
+            except:
+                self.msg = "Invalid input"
+        
+        curses.curs_set(0)
 
 def main():
     try:

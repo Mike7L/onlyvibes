@@ -6,9 +6,17 @@
 export class BaseProvider {
     constructor(config = {}) {
         this.config = config;
+        this.name = 'Base';
+        this.capabilities = {
+            search: false,
+            resolve: false
+        };
     }
     async search(query) { throw new Error("Not implemented"); }
     async resolve(id) { throw new Error("Not implemented"); }
+
+    canSearch() { return this.capabilities.search; }
+    canResolve() { return this.capabilities.resolve; }
 }
 
 /**
@@ -19,6 +27,7 @@ export class YouTubeiProvider extends BaseProvider {
         super(config);
         this.name = 'YouTube';
         this.baseUrl = 'https://www.youtube.com/youtubei/v1';
+        this.capabilities.search = true;
     }
 
     async search(query) {
@@ -43,7 +52,6 @@ export class YouTubeiProvider extends BaseProvider {
             if (!res.ok) return [];
             const data = await res.json();
 
-            // Basic parsing of YouTubei results
             const contents = data.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents || [];
 
             return contents
@@ -56,17 +64,13 @@ export class YouTubeiProvider extends BaseProvider {
                         duration: video.lengthText?.simpleText || '0:00',
                         uploader: video.ownerText.runs[0].text,
                         source: 'YT',
-                        provider: 'YouTube'
+                        provider: this.name
                     };
                 }).slice(0, 10);
         } catch (e) {
             console.error("[YouTubei] Search failed:", e);
             return [];
         }
-    }
-
-    async resolve(videoId) {
-        return null;
     }
 }
 
@@ -77,7 +81,7 @@ export class AudiomackProvider extends BaseProvider {
     constructor(config) {
         super(config);
         this.name = 'Audiomack';
-        this.searchUrl = 'https://api.audiomack.com/v1/search';
+        this.capabilities.search = true;
     }
 
     async search(query) {
@@ -93,16 +97,12 @@ export class AudiomackProvider extends BaseProvider {
                 duration: item.duration,
                 uploader: item.artist || 'Unknown',
                 source: 'AM',
-                provider: 'Audiomack'
+                provider: this.name
             }));
         } catch (e) {
             console.error("[Audiomack] Search failed:", e);
             return [];
         }
-    }
-
-    async resolve(id) {
-        return null;
     }
 }
 
@@ -117,6 +117,8 @@ export class PipedProvider extends BaseProvider {
             { url: 'https://pipedapi.kavin.rocks' }
         ];
         this.currentIndex = 0;
+        this.capabilities.search = true;
+        this.capabilities.resolve = true;
     }
 
     async search(query) {
@@ -131,7 +133,7 @@ export class PipedProvider extends BaseProvider {
             duration: item.duration,
             uploader: item.uploaderName,
             source: 'PI',
-            provider: 'Piped'
+            provider: this.name
         })).slice(0, 10);
     }
 
@@ -160,6 +162,8 @@ export class InvidiousProvider extends BaseProvider {
             { url: 'https://iv.melmac.space' }
         ];
         this.currentIndex = 0;
+        this.capabilities.search = true;
+        this.capabilities.resolve = true;
     }
 
     async search(query) {
@@ -174,7 +178,7 @@ export class InvidiousProvider extends BaseProvider {
             duration: item.lengthSeconds,
             uploader: item.author,
             source: 'IV',
-            provider: 'Invidious'
+            provider: this.name
         })) : [];
     }
 
@@ -203,6 +207,7 @@ export class SoundCloudProvider extends BaseProvider {
         super(config);
         this.name = 'SoundCloud';
         this.clientId = null;
+        this.capabilities.search = true;
     }
 
     async getClientId() {
@@ -239,15 +244,11 @@ export class SoundCloudProvider extends BaseProvider {
                 duration: Math.floor(item.duration / 1000),
                 uploader: item.user?.username || 'Unknown',
                 source: 'SC',
-                provider: 'SoundCloud'
+                provider: this.name
             }));
         } catch (e) {
             console.error("[SoundCloud] Search failed:", e);
             return [];
         }
-    }
-
-    async resolve(id) {
-        return null;
     }
 }

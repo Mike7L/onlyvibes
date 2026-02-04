@@ -1,0 +1,14 @@
+{
+    "name": "onlymusic",
+    "version": "1.1.0",
+    "description": "OnlyMusic PWA and Streamer",
+    "scripts": {
+        "test": "./run_tests.sh",
+        "test:pwa": "cd pwa && node tests/api-tests.js",
+        "test:pwa:providers": "cd pwa && node tests/provider-tests.js",
+        "test:pwa:ytdl": "cd pwa && node tests/no-ytdl-verify.js",
+        "test:streamer": "export PYTHONPATH=$PYTHONPATH:. && python3 tests/test_streamer_features.py",
+        "test:streamer:fallback": "python3 pwa/tests/test_streamer_no_ytdl.py"
+    },
+    "devDependencies": {}
+}

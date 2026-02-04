@@ -1,0 +1,28 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Debug PWA API Tests",
+            "program": "${workspaceFolder}/pwa/tests/api-tests.js",
+            "cwd": "${workspaceFolder}/pwa"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Verify ytdl Independence",
+            "program": "${workspaceFolder}/pwa/tests/no-ytdl-verify.js",
+            "cwd": "${workspaceFolder}/pwa"
+        },
+        {
+            "type": "python",
+            "request": "launch",
+            "name": "Debug Streamer Fallback Test",
+            "program": "${workspaceFolder}/pwa/tests/test_streamer_no_ytdl.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

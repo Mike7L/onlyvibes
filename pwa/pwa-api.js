@@ -22,21 +22,20 @@ export class PwaApi {
     async search(query) {
         console.error(`[PwaApi] Aggregating search for: ${query}`);
 
-        // Parallel search requests
-        const searchPromises = Object.entries(this.providers).map(async ([key, provider]) => {
-            try {
-                const results = await provider.search(query);
-                return results.map(r => ({ ...r, provider: provider.name }));
-            } catch (e) {
-                console.warn(`[PwaApi] Provider ${key} failed:`, e.message);
-                if (provider.rotate) provider.rotate();
-                return [];
-            }
-        });
+        const searchPromises = Object.entries(this.providers)
+            .filter(([_, provider]) => provider.canSearch())
+            .map(async ([key, provider]) => {
+                try {
+                    const results = await provider.search(query);
+                    return results.map(r => ({ ...r, provider: provider.name }));
+                } catch (e) {
+                    console.warn(`[PwaApi] Provider ${key} failed:`, e.message);
+                    if (provider.rotate) provider.rotate();
+                    return [];
+                }
+            });
 
         const allResults = await Promise.all(searchPromises);
-
-        // Flatten and deduplicate (very basic deduplication by title/videoId)
         const flatResults = allResults.flat();
         const seen = new Set();
         const uniqueResults = [];
@@ -56,25 +55,16 @@ export class PwaApi {
      * Resolve a videoId to a streamable URL
      */
     async resolveStream(videoId, sourceHint = 'YT') {
-        const primaryProviders = sourceHint === 'AM' ? ['am'] : ['pi', 'iv'];
+        const resolvingProviders = Object.values(this.providers).filter(p => p.canResolve());
 
-        for (const key of primaryProviders) {
-            const provider = this.providers[key];
+        // Sort to prioritize source hint if relevant (basic logic)
+        for (const provider of resolvingProviders) {
             try {
                 const url = await provider.resolve(videoId);
                 if (url) return url;
             } catch (e) {
                 if (provider.rotate) provider.rotate();
             }
-        }
-
-        // Final fallback to any provider that can resolve
-        for (const [key, provider] of Object.entries(this.providers)) {
-            if (primaryProviders.includes(key)) continue;
-            try {
-                const url = await provider.resolve(videoId);
-                if (url) return url;
-            } catch (e) { }
         }
 
         return null;

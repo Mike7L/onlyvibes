@@ -24,5 +24,6 @@
         "--no-video",
         "--volume=80",
         "--msg-level=all=status"
-    ]
+    ],
+    "max_duration": 1200
 }

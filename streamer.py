@@ -325,6 +325,8 @@ class MusicStreamer:
             current = self.cache_metadata['files'][url].get('is_liked', False)
             new_status = not current
             self.cache_metadata['files'][url]['is_liked'] = new_status
+            if new_status:
+                self.cache_metadata['files'][url]['is_disliked'] = False # Лайк убирает дизлайк
             self._save_cache_metadata()
             return new_status
         return False
@@ -460,7 +462,16 @@ class MusicStreamer:
                         continue
             
             print(f"✅ Найдено (yt-dlp): {len(videos)}")
-            return videos
+            
+            # Filter by duration if max_duration is set
+            max_dur = self.config.get("max_duration")
+            if max_dur:
+                filtered = [v for v in videos if v.get('duration') is None or v.get('duration') <= max_dur]
+                if len(filtered) < len(videos):
+                    print(f"✂️  Отфильтровано по длительности: {len(videos) - len(filtered)}")
+                return filtered[:max_results]
+                
+            return videos[:max_results]
         except subprocess.CalledProcessError:
             print("❌ Error")
             return []
@@ -502,8 +513,28 @@ class MusicStreamer:
                         'duration': video.get('lengthText', {}).get('simpleText', '0:00'),
                         'uploader': video.get('ownerText', {}).get('runs', [{}])[0].get('text', 'Unknown')
                     })
-                    if len(results) >= max_results: break
-                return results
+                    if len(results) >= max_results + 10: break # Get a few more to filter
+                
+                # Filter by duration
+                max_dur = self.config.get("max_duration")
+                if max_dur:
+                    # YTI duration is string like "3:05"
+                    filtered = []
+                    for v in results:
+                        dur_str = v.get('duration', '0:00')
+                        try:
+                            parts = dur_str.split(':')
+                            secs = 0
+                            if len(parts) == 2: secs = int(parts[0])*60 + int(parts[1])
+                            elif len(parts) == 3: secs = int(parts[0])*3600 + int(parts[1])*60 + int(parts[2])
+                            
+                            if secs <= max_dur:
+                                filtered.append(v)
+                        except:
+                            filtered.append(v)
+                    results = filtered
+
+                return results[:max_results]
         except Exception:
             return []
 
@@ -543,7 +574,26 @@ class MusicStreamer:
                                 'uploader': item.get('author', 'Unknown'),
                                 'video_id': item.get('videoId')
                             })
-                    return videos
+                    
+                    # Filter by duration
+                    max_dur = self.config.get("max_duration")
+                    if max_dur:
+                        results = []
+                        for v in videos:
+                            dur = v.get('duration')
+                            if dur is None: # Live or unknown
+                                results.append(v)
+                                continue
+                            
+                            # Invidious lengthSeconds is int, Piped duration is int (usually)
+                            try:
+                                if int(dur) <= max_dur:
+                                    results.append(v)
+                            except:
+                                results.append(v)
+                        videos = results
+
+                    return videos[:max_results]
             except Exception:
                 self.current_pwa_index = (self.current_pwa_index + 1) % len(self.pwa_instances)
         return None

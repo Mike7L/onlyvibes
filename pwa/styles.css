@@ -243,17 +243,30 @@ body {
     color: var(--on-surface-variant);
 }
 
+.track-actions {
+    display: flex;
+    gap: 8px;
+}
+
 .track-actions .icon-btn {
-    background: none;
-    border: none;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
     width: 36px;
     height: 36px;
-    opacity: 0.6;
+    opacity: 0.7;
 }
 
 .track-actions .icon-btn:hover {
     opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.track-actions .remove-track-btn:hover {
     color: #ef4444;
+}
+
+.track-actions .download-btn:hover {
+    color: var(--accent-primary);
 }
 
 /* Empty State */
