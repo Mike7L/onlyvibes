@@ -1,4 +1,4 @@
-import { InvidiousProvider, PipedProvider, YouTubeiProvider, YtPuttyProvider, AIGalleryProvider, CorsProxy } from './lib/yt-putty/index.js';
+import { InvidiousProvider, PipedProvider, YouTubeiProvider, YtPuttyProvider, AIGalleryProvider, SimilarSongsProvider, CorsProxy } from './lib/yt-putty/index.js';
 
 class MusicApp {
     constructor() {
@@ -30,7 +30,8 @@ class MusicApp {
             new InvidiousProvider(config),
             new PipedProvider(config),
             new YtPuttyProvider(config),
-            new AIGalleryProvider(config)
+            new AIGalleryProvider(config),
+            new SimilarSongsProvider(config)
         ];
         this.renderGalleries();
         console.log(`[i] Initialized ${this.providers.length} providers`);
@@ -520,6 +521,9 @@ class MusicApp {
                     <div class="track-artist">${isCached ? '💾 ' : ''}${this.formatDuration(track.duration)} • ${track.uploader}</div>
                 </div>
                 <div class="track-actions">
+                    <button class="icon-btn similar-btn" onclick="event.stopPropagation(); app.loadSimilar(${index});" title="Find similar music">
+                        <span class="material-symbols-rounded">auto_awesome</span>
+                    </button>
                     ${!isCached ? `
                         <button class="icon-btn download-btn" onclick="event.stopPropagation(); app.downloadTrack(${index});" title="Download for offline">
                             <span class="material-symbols-rounded">download</span>
@@ -739,31 +743,60 @@ class MusicApp {
             this.showStatus("Failed to load gallery");
         }
     }
+}
 
-    showStatus(msg, dur = 3000) {
-        this.statusMsg.textContent = msg;
-        this.statusMsg.classList.add('visible');
-        setTimeout(() => this.statusMsg.classList.remove('visible'), dur);
-    }
+    async loadSimilar(index) {
+    if (index < 0 || index >= this.tracks.length) return;
+    const track = this.tracks[index];
+    this.showStatus(`Finding songs similar to ${track.title}...`);
 
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
+    const similarProvider = this.providers.find(p => p instanceof SimilarSongsProvider);
+    if (!similarProvider) return;
 
-    formatDuration(seconds) {
-        if (!seconds) return '0:00';
-        const m = Math.floor(seconds / 60);
-        const s = Math.floor(seconds % 60);
-        return `${m}:${s.toString().padStart(2, '0')}`;
-    }
+    try {
+        // We use the artist + title for better similarity relevance
+        const query = `${track.uploader} ${track.title}`;
+        const results = await similarProvider.search(query);
 
-    formatTime(s) { return this.formatDuration(s); }
-    handleAudioError(e) {
-        this.showStatus("Error playing stream");
-        console.error(e);
+        if (results && results.length > 0) {
+            this.tracks = results;
+            this.currentTrackIndex = -1;
+            this.renderTracks();
+            this.saveTracks();
+            this.showStatus(`Found ${results.length} similar tracks`);
+        } else {
+            this.showStatus("No similar tracks found");
+        }
+    } catch (e) {
+        console.error("Similar Load Error:", e);
+        this.showStatus("Failed to find similar music");
     }
+}
+
+showStatus(msg, dur = 3000) {
+    this.statusMsg.textContent = msg;
+    this.statusMsg.classList.add('visible');
+    setTimeout(() => this.statusMsg.classList.remove('visible'), dur);
+}
+
+escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+formatDuration(seconds) {
+    if (!seconds) return '0:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+formatTime(s) { return this.formatDuration(s); }
+handleAudioError(e) {
+    this.showStatus("Error playing stream");
+    console.error(e);
+}
 }
 
 // Make app instance global

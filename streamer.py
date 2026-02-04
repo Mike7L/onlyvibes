@@ -277,8 +277,9 @@ class MusicStreamer:
         if stream_url:
             if self._download_direct(stream_url, cache_path, show_progress):
                 self._save_metadata_entry(track, cache_path, download_method="PWA")
-                # Запускаем фоновую очистку после успешного скачивания
+                # Запускаем фоновую очистку и скачивание субтитров после успешного скачивания
                 threading.Thread(target=self._enforce_cache_limit, daemon=True).start()
+                threading.Thread(target=self.download_subtitles, args=(url,), daemon=True).start()
                 return True
 
         # 2. Fallback на yt-dlp
@@ -293,13 +294,71 @@ class MusicStreamer:
         try:
             subprocess.run(cmd, check=True, capture_output=not show_progress)
             self._save_metadata_entry(track, cache_path, download_method="YTDLP")
-            # Запускаем фоновую очистку после успешного скачивания
+            # Запускаем фоновую очистку и скачивание субтитров после успешного скачивания
             threading.Thread(target=self._enforce_cache_limit, daemon=True).start()
+            threading.Thread(target=self.download_subtitles, args=(url,), daemon=True).start()
             return True
         except subprocess.CalledProcessError as e:
             if show_progress:
                 print(f"❌ Ошибка кеширования: {track['title'][:50]}")
             return False
+
+    def download_subtitles(self, url: str) -> Optional[str]:
+        """Скачать субтитры (VTT) для трека"""
+        cache_path = self._get_cache_path(url)
+        
+        # Проверяем, есть ли уже в кеше
+        if 'files' in self.cache_metadata and url in self.cache_metadata['files']:
+            meta = self.cache_metadata['files'][url]
+            if meta.get('subtitle_path'):
+                p = Path(meta['subtitle_path'])
+                if p.exists(): return str(p)
+
+        # Пытаемся скачать
+        video_id = url.split('v=')[-1].split('&')[0]
+        temp_base = self.cache_dir / f"subs_{video_id}"
+        
+        cmd = [
+            'yt-dlp', '--skip-download', '--write-auto-sub', '--write-sub',
+            '--sub-lang', 'en', '--sub-format', 'vtt',
+            '-o', str(temp_base),
+            url
+        ]
+        
+        try:
+            # We don't use check=True here because yt-dlp might 'fail' to find subs but we want to handle it
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            # yt-dlp might save as temp_base.en.vtt or temp_base.vtt
+            expected = Path(str(temp_base) + ".en.vtt")
+            if not expected.exists():
+                expected = Path(str(temp_base) + ".vtt")
+            
+            if expected.exists():
+                # Финальный путь рядом с будущим или текущим аудио-файлом
+                final_path = cache_path.with_suffix('.en.vtt')
+                if expected != final_path:
+                    if final_path.exists(): final_path.unlink()
+                    expected.rename(final_path)
+                
+                # Обновляем метаданные
+                if 'files' not in self.cache_metadata:
+                    self.cache_metadata['files'] = {}
+                
+                if url not in self.cache_metadata['files']:
+                    self.cache_metadata['files'][url] = {
+                        'title': 'Unknown',
+                        'uploader': 'Unknown',
+                        'duration': 0
+                    }
+                
+                self.cache_metadata['files'][url]['subtitle_path'] = str(final_path)
+                self._save_cache_metadata()
+                
+                return str(final_path)
+        except Exception:
+            pass
+        return None
 
     def _save_metadata_entry(self, track: Dict, cache_path: Path, download_method: str) -> None:
         """Сохранить запись в метаданные и переименовать файл с суффиксами"""
@@ -328,7 +387,8 @@ class MusicStreamer:
             'play_count': self.cache_metadata['files'].get(url, {}).get('play_count', 0),
             'last_played_at': self.cache_metadata['files'].get(url, {}).get('last_played_at'),
             'is_liked': self.cache_metadata['files'].get(url, {}).get('is_liked', False),
-            'is_disliked': self.cache_metadata['files'].get(url, {}).get('is_disliked', False)
+            'is_disliked': self.cache_metadata['files'].get(url, {}).get('is_disliked', False),
+            'subtitle_path': self.cache_metadata['files'].get(url, {}).get('subtitle_path')
         }
         self._save_cache_metadata()
         print(f"✅ Кешировано: {track['title'][:50]} {suffix}")
@@ -491,7 +551,53 @@ class MusicStreamer:
         except Exception as e:
             print(f"⚠️ Ошибка при очистке кеша: {e}")
     
-    def _precache_playlist(self, start_index: int = 0, max_tracks: int = 3) -> None:
+    def _ensure_next_track_cached(self, current_pos: int) -> bool:
+        """Ensure the next track in playlist is cached"""
+        next_pos = current_pos + 1
+        
+        # Check if there is a next track
+        if next_pos >= len(self.playlist):
+            return True  # No next track, nothing to do
+        
+        next_track = self.playlist[next_pos]
+        
+        # If already cached, we're good
+        if self._is_cached(next_track['url']):
+            return True
+        
+        # Download synchronously (blocking) to ensure it's ready
+        try:
+            return self._download_to_cache(next_track, show_progress=False)
+        except Exception:
+            return False
+    
+    def _monitor_playback_and_preload(self) -> None:
+        """Monitor playback and preload next track before current finishes"""
+        last_preloaded_pos = -1
+        
+        while self.mpv_process:
+            try:
+                playlist_pos = self._get_mpv_property('playlist-pos')
+                time_pos = self._get_mpv_property('time-pos')
+                duration = self._get_mpv_property('duration')
+                
+                if playlist_pos is not None and time_pos and duration:
+                    # Check if we're 80% through current track
+                    progress = time_pos / duration
+                    
+                    if progress >= 0.8 and playlist_pos != last_preloaded_pos:
+                        # Ensure next track is ready
+                        if self._ensure_next_track_cached(playlist_pos):
+                            last_preloaded_pos = playlist_pos
+                
+                time.sleep(2)  # Check every 2 seconds
+            except Exception:
+                pass
+            
+            # Small sleep to prevent busy loop if mpv_process becomes None
+            time.sleep(0.1)
+    
+    def _precache_playlist(self, start_index: int = 0, max_tracks: int = 2) -> None:
         """Предварительное кеширование следующих треков в фоне"""
         def download_worker(tracks_to_cache):
             for track in tracks_to_cache:
@@ -847,7 +953,7 @@ class MusicStreamer:
         
         # Запускаем фоновое кеширование
         if use_cache:
-            self._precache_playlist(start_index=0, max_tracks=5)
+            self._precache_playlist(start_index=0, max_tracks=2)
         
         # Формируем список файлов/URL для воспроизведения
         playlist_items = []
@@ -871,6 +977,10 @@ class MusicStreamer:
         print(f"▶️  Запуск: {self.playlist[0]['title'][:50]}...")
         # Запускаем mpv в фоне
         self.mpv_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Start playback monitoring thread for preloading
+        if use_cache:
+            threading.Thread(target=self._monitor_playback_and_preload, daemon=True).start()
     
     def cache_all_playlist(self) -> None:
         """Кешировать весь плейлист"""

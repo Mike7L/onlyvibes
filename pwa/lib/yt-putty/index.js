@@ -12,6 +12,7 @@ import {
     InvidiousProvider,
     SoundCloudProvider,
     AIGalleryProvider,
+    SimilarSongsProvider,
     BaseProvider,
     CorsProxy
 } from './providers.js';
@@ -25,6 +26,7 @@ export {
     InvidiousProvider,
     SoundCloudProvider,
     AIGalleryProvider,
+    SimilarSongsProvider,
     BaseProvider,
     CorsProxy
 };

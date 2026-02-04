@@ -11,3 +11,7 @@ dist/
 
 # Music cache
 music_cache/
+
+# Logs
+*.log
+tui_crash.log

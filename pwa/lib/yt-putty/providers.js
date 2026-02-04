@@ -396,3 +396,38 @@ export class AIGalleryProvider extends BaseProvider {
         }));
     }
 }
+
+/**
+ * SimilarSongsProvider - Finds music similar to a search query or track
+ */
+export class SimilarSongsProvider extends BaseProvider {
+    constructor(config = {}) {
+        super(config);
+        this.name = 'Similar Music';
+        this.capabilities.search = true;
+        this.capabilities.resolve = false; // Delegates to other providers
+    }
+
+    async search(query) {
+        let searchQuery = query;
+
+        // Handle "similar:" prefix if present
+        if (query.startsWith('similar:')) {
+            searchQuery = query.replace('similar:', '').trim();
+        }
+
+        // Append "similar music" to the query to leverage YouTube's search relevance
+        const finalQuery = `${searchQuery} similar music`;
+
+        // Use YouTubeiProvider logic to fetch results
+        const yt = new YouTubeiProvider(this.config);
+        const results = await yt.search(finalQuery);
+
+        return results.map(r => ({
+            ...r,
+            source: 'SM',
+            provider: this.name,
+            originalQuery: query
+        }));
+    }
+}
