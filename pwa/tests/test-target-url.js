@@ -10,15 +10,22 @@ async function testTarget(targetId) {
     console.log(`--- Testing Target Video: ${targetId} ---`);
     const api = new PwaApi();
 
-    // 1. Test Resolution directly
-    console.log(`[i] Attempting direct resolution for ${targetId}...`);
-    const streamUrl = await api.resolveStream(targetId);
-
-    if (streamUrl) {
-        console.log(`[+] Success: Stream resolved!`);
-        console.log(`[+] URL: ${streamUrl.substring(0, 60)}...`);
-    } else {
-        console.error(`[-] Failed: Could not resolve stream directly.`);
+    // 1. Test Resolution with each capable provider
+    console.log(`[i] Attempting resolution for ${targetId} through each provider...`);
+    for (const [key, provider] of Object.entries(api.providers)) {
+        if (provider.canResolve()) {
+            try {
+                const url = await provider.resolve(targetId);
+                if (url) {
+                    console.log(`[+] [${provider.name}] Success! URL: ${url.substring(0, 50)}...`);
+                } else {
+                    console.warn(`[-] [${provider.name}] No stream URL returned.`);
+                }
+            } catch (e) {
+                console.error(`[x] [${provider.name}] Failed: ${e.message}`);
+                if (provider.rotate) provider.rotate();
+            }
+        }
     }
 
     // 2. Test Search by ID
