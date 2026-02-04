@@ -19,6 +19,8 @@ import tty
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 import random
+import urllib.request
+import urllib.parse
 
 
 class MusicStreamer:
@@ -42,9 +44,12 @@ class MusicStreamer:
         self.playlist: List[Dict] = []
         self.current_index: int = 0
         
+        # Загрузка настроек из внешнего файла
+        self.config = self._load_config()
+        
         # Настройка кеша
         if cache_dir is None:
-            cache_dir = os.path.expanduser("~/.cache/music-streamer")
+            cache_dir = self.config.get("cache_dir", "/Users/micha/Dropbox/Projects/onlymusic/music_cache")
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
@@ -58,6 +63,25 @@ class MusicStreamer:
         # Состояние mpv
         self.mpv_process: Optional[subprocess.Popen] = None
         self.mpv_socket = "/tmp/mpv-music-streamer.sock"
+        
+        # Инстансы PWA API (для быстрого поиска)
+        self.pwa_instances = self.config.get("api_instances", [
+            {'type': 'invidious', 'url': 'https://iv.melmac.space'},
+            {'type': 'invidious', 'url': 'https://invidious.reallyaweso.me'},
+            {'type': 'piped', 'url': 'https://pipedapi.kavin.rocks'},
+        ])
+        self.current_pwa_index = 0
+
+    def _load_config(self) -> Dict:
+        """Загрузка конфигурации из config.json"""
+        config_path = Path(__file__).parent / "config.json"
+        if config_path.exists():
+            try:
+                with open(config_path, 'r') as f:
+                    return json.load(f)
+            except:
+                pass
+        return {}
         
     def _load_cache_metadata(self) -> Dict:
         """Загрузка метаданных кеша"""
@@ -79,14 +103,27 @@ class MusicStreamer:
             json.dump(self.cache_metadata, f, ensure_ascii=False, indent=2)
     
     def _get_cache_path(self, url: str) -> Path:
-        """Получить путь к кешированному файлу"""
+        """Получить путь к кешированному файлу (сначала проверяем метаданные)"""
+        if 'files' in self.cache_metadata and url in self.cache_metadata['files']:
+            filename = self.cache_metadata['files'][url].get('filename')
+            if filename:
+                path = self.cache_dir / filename
+                if path.exists(): return path
+        
+        # Fallback на старое имя
         url_hash = hashlib.md5(url.encode()).hexdigest()
         return self.cache_dir / f"{url_hash}.m4a"
-    
+
     def _is_cached(self, url: str) -> bool:
-        """Проверить, есть ли файл в кеше"""
-        cache_path = self._get_cache_path(url)
-        return cache_path.exists() and url in self.cache_metadata.get('files', {})
+        """Проверить, есть ли файл в кеше (через метаданные или прямой путь)"""
+        if 'files' in self.cache_metadata and url in self.cache_metadata['files']:
+            filename = self.cache_metadata['files'][url].get('filename')
+            if filename and (self.cache_dir / filename).exists():
+                return True
+        
+        # Проверка по умолчанию
+        url_hash = hashlib.md5(url.encode()).hexdigest()
+        return (self.cache_dir / f"{url_hash}.m4a").exists()
 
     def delete_from_cache(self, url: str) -> bool:
         """Удалить трек из кеша"""
@@ -156,6 +193,57 @@ class MusicStreamer:
         if Path(self.mpv_socket).exists():
             Path(self.mpv_socket).unlink()
     
+    def _resolve_stream_pwa(self, video_id: str) -> Optional[str]:
+        """Получить прямую ссылку на поток через PWA API"""
+        for _ in range(len(self.pwa_instances)):
+            instance = self.pwa_instances[self.current_pwa_index]
+            try:
+                if instance['type'] == 'piped':
+                    url = f"{instance['url']}/streams/{video_id}"
+                else:
+                    url = f"{instance['url']}/api/v1/videos/{video_id}"
+                
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    data = json.loads(response.read().decode())
+                    
+                    if instance['type'] == 'piped':
+                        streams = data.get('audioStreams', [])
+                        streams.sort(key=lambda x: x.get('bitrate', 0), reverse=True)
+                        if streams: return streams[0]['url']
+                    else:
+                        formats = data.get('adaptiveFormats', [])
+                        audio = [f for f in formats if f.get('type', '').startswith('audio')]
+                        audio.sort(key=lambda x: x.get('bitrate', 0), reverse=True)
+                        if audio: return audio[0]['url']
+            except Exception:
+                self.current_pwa_index = (self.current_pwa_index + 1) % len(self.pwa_instances)
+        return None
+
+    def _download_direct(self, url: str, path: Path, show_progress: bool = True) -> bool:
+        """Скачать файл напрямую по ссылке"""
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                total_size = int(response.info().get('Content-Length', 0))
+                block_size = 1024 * 64
+                downloaded = 0
+                
+                with open(path, 'wb') as f:
+                    while True:
+                        buffer = response.read(block_size)
+                        if not buffer: break
+                        downloaded += len(buffer)
+                        f.write(buffer)
+                        if show_progress and total_size:
+                            percent = int(downloaded * 100 / total_size)
+                            print(f"\r📥 Загрузка: {percent}%", end="", flush=True)
+                if show_progress: print()
+                return True
+        except Exception as e:
+            if show_progress: print(f"❌ Ошибка загрузки: {e}")
+            return False
+
     def _download_to_cache(self, track: Dict, show_progress: bool = True) -> bool:
         """Скачать трек в кеш"""
         url = track['url']
@@ -167,41 +255,102 @@ class MusicStreamer:
         if show_progress:
             title = track['title'][:50] + "..." if len(track['title']) > 50 else track['title']
             print(f"📥 Кеширование: {title}")
-        
+
+        # 1. Пробуем через PWA API (быстрее)
+        video_id = track.get('video_id') or url.split('v=')[-1]
+        stream_url = self._resolve_stream_pwa(video_id)
+        if stream_url:
+            if self._download_direct(stream_url, cache_path, show_progress):
+                self._save_metadata_entry(track, cache_path, download_method="PWA")
+                return True
+
+        # 2. Fallback на yt-dlp
+        if show_progress: print("🔄 Переключение на yt-dlp...")
+        audio_quality = self.config.get("audio_quality", "128k")
         cmd = [
-            'yt-dlp',
-            '--extract-audio',
-            '--audio-format', 'm4a',
-            '--audio-quality', '128k',
-            '-o', str(cache_path),
-            '--no-playlist',
-            '--quiet' if not show_progress else '--progress',
+            'yt-dlp', '--extract-audio', '--audio-format', 'm4a',
+            '--audio-quality', audio_quality, '-o', str(cache_path),
+            '--no-playlist', '--quiet' if not show_progress else '--progress',
             url
         ]
-        
         try:
             subprocess.run(cmd, check=True, capture_output=not show_progress)
-            
-            # Сохраняем метаданные
-            if 'files' not in self.cache_metadata:
-                self.cache_metadata['files'] = {}
-            
-            self.cache_metadata['files'][url] = {
-                'title': track['title'],
-                'uploader': track['uploader'],
-                'duration': track['duration'],
-                'cached_at': str(Path(cache_path).stat().st_mtime)
-            }
-            self._save_cache_metadata()
-            
-            if show_progress:
-                print(f"✅ Кешировано: {track['title'][:50]}")
+            self._save_metadata_entry(track, cache_path, download_method="YTDLP")
             return True
-            
         except subprocess.CalledProcessError as e:
             if show_progress:
                 print(f"❌ Ошибка кеширования: {track['title'][:50]}")
             return False
+
+    def _save_metadata_entry(self, track: Dict, cache_path: Path, download_method: str) -> None:
+        """Сохранить запись в метаданные и переименовать файл с суффиксами"""
+        url = track['url']
+        search_method = track.get('search_method', 'UNK')
+        
+        # Переименование файла для наглядности (суффиксы)
+        suffix = f"_[S-{search_method}]_[D-{download_method}]"
+        new_path = cache_path.with_name(f"{cache_path.stem}{suffix}{cache_path.suffix}")
+        
+        if cache_path.exists():
+            cache_path.rename(new_path)
+        
+        if 'files' not in self.cache_metadata:
+            self.cache_metadata['files'] = {}
+        
+        self.cache_metadata['files'][url] = {
+            'title': track['title'],
+            'uploader': track['uploader'],
+            'duration': track['duration'],
+            'cached_at': str(new_path.stat().st_mtime),
+            'filename': new_path.name,
+            'search_method': search_method,
+            'download_method': download_method,
+            'play_count': self.cache_metadata['files'].get(url, {}).get('play_count', 0),
+            'is_liked': self.cache_metadata['files'].get(url, {}).get('is_liked', False),
+            'is_disliked': self.cache_metadata['files'].get(url, {}).get('is_disliked', False)
+        }
+        self._save_cache_metadata()
+        print(f"✅ Кешировано: {track['title'][:50]} {suffix}")
+
+    def increment_play_count(self, url: str) -> None:
+        """Увеличить счетчик проигрываний"""
+        if 'files' in self.cache_metadata and url in self.cache_metadata['files']:
+            current = self.cache_metadata['files'][url].get('play_count', 0)
+            self.cache_metadata['files'][url]['play_count'] = current + 1
+            self._save_cache_metadata()
+
+    def toggle_like(self, url: str) -> bool:
+        """Переключить статус 'лайка'"""
+        if 'files' in self.cache_metadata and url in self.cache_metadata['files']:
+            current = self.cache_metadata['files'][url].get('is_liked', False)
+            new_status = not current
+            self.cache_metadata['files'][url]['is_liked'] = new_status
+            self._save_cache_metadata()
+            return new_status
+        return False
+
+    def toggle_dislike(self, url: str) -> bool:
+        """Переключить статус 'дизлайка'"""
+        if 'files' in self.cache_metadata and url in self.cache_metadata['files']:
+            current = self.cache_metadata['files'][url].get('is_disliked', False)
+            new_status = not current
+            self.cache_metadata['files'][url]['is_disliked'] = new_status
+            if new_status:
+                self.cache_metadata['files'][url]['is_liked'] = False # Дизлайк убирает лайк
+            self._save_cache_metadata()
+            return new_status
+        return False
+
+    def get_track_stats(self, url: str) -> Dict:
+        """Получить статистику трека"""
+        if 'files' in self.cache_metadata and url in self.cache_metadata['files']:
+            meta = self.cache_metadata['files'][url]
+            return {
+                'play_count': meta.get('play_count', 0),
+                'is_liked': meta.get('is_liked', False),
+                'is_disliked': meta.get('is_disliked', False)
+            }
+        return {'play_count': 0, 'is_liked': False, 'is_disliked': False}
     
     def _precache_playlist(self, start_index: int = 0, max_tracks: int = 3) -> None:
         """Предварительное кеширование следующих треков в фоне"""
@@ -241,9 +390,52 @@ class MusicStreamer:
         return True
     
     def search(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Поиск музыки"""
-        print(f"🔍 Поиск: {query}...", end=" ")
+        """Поиск музыки (сначала через PWA CLI, затем Python PWA API, затем yt-dlp)"""
+        print(f"🔍 Поиск: {query}...", end=" ", flush=True)
         
+        # 1. Пробуем PWA CLI (Node.js) для агрегированного поиска (самый полный)
+        try:
+            cli_path = Path(__file__).parent / "pwa" / "pwa-cli.js"
+            if cli_path.exists():
+                cmd = ['node', str(cli_path), 'search', query, '--json']
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    videos = json.loads(result.stdout)
+                    if videos:
+                        for v in videos:
+                            v['search_method'] = v.get('source', 'PWA')
+                            # Ensure URL is present for yt-dlp fallback compatibility
+                            if 'url' not in v and 'videoId' in v:
+                                # For YouTube sources
+                                if v.get('source') in ['YT', 'PI', 'IV', 'YouTube', 'Invidious', 'Piped']:
+                                    v['url'] = f"https://www.youtube.com/watch?v={v['videoId']}"
+                                # For Audiomack
+                                elif v.get('source') == 'AM':
+                                    v['url'] = f"https://audiomack.com/song/{v['videoId']}"
+                                # For SoundCloud
+                                elif v.get('source') == 'SC':
+                                    v['url'] = f"https://soundcloud.com/{v['videoId']}"
+
+                        print(f"✅ Найдено (PWA-CLI): {len(videos)}")
+                        return videos[:max_results]
+        except Exception as e:
+            pass
+
+        # 2. Пробуем Python-базированный поиск (Piped/Invidious)
+        videos = self._search_pwa(query, max_results)
+        if videos:
+            for v in videos: v['search_method'] = 'PWA-PY'
+            print(f"✅ Найдено (PWA-PY): {len(videos)}")
+            return videos
+
+        # 3. Добавляем прямой YouTubei поиск на Python (быстро и без ключей)
+        videos = self._search_youtubei_python(query, max_results)
+        if videos:
+            for v in videos: v['search_method'] = 'YTI-PY'
+            print(f"✅ Найдено (YTI-PY): {len(videos)}")
+            return videos
+            
+        # 4. Fallback на yt-dlp (самый медленный)
         cmd = [
             'yt-dlp', '--dump-json', '--default-search', 'ytsearch',
             '--skip-download', f'ytsearch{max_results}:{query}'
@@ -261,16 +453,100 @@ class MusicStreamer:
                             'title': data.get('title', 'Unknown'),
                             'url': data.get('webpage_url'),
                             'duration': data.get('duration'),
-                            'uploader': data.get('uploader', 'Unknown')
+                            'uploader': data.get('uploader', 'Unknown'),
+                            'search_method': 'YTDLP'
                         })
                     except json.JSONDecodeError:
                         continue
             
-            print(f"✅ Найдено: {len(videos)}")
+            print(f"✅ Найдено (yt-dlp): {len(videos)}")
             return videos
         except subprocess.CalledProcessError:
-            print("❌")
+            print("❌ Error")
             return []
+
+    def _search_youtubei_python(self, query: str, max_results: int) -> List[Dict]:
+        """Прямой поиск через YouTubei API на Python"""
+        try:
+            url = "https://www.youtube.com/youtubei/v1/search"
+            payload = {
+                "context": {
+                    "client": {
+                        "clientName": "WEB",
+                        "clientVersion": "2.20230522.01.00",
+                        "hl": "en",
+                        "gl": "US"
+                    }
+                },
+                "query": query
+            }
+            req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode())
+                
+                # Упрощенный парсинг YouTubei в Python
+                contents = data.get('contents', {}).get('twoColumnSearchResultsRenderer', {}).get('primaryContents', {}).get('sectionListRenderer', {}).get('contents', [])
+                if not contents: return []
+                
+                video_items = contents[0].get('itemSectionRenderer', {}).get('contents', [])
+                
+                results = []
+                for item in video_items:
+                    video = item.get('videoRenderer')
+                    if not video: continue
+                    
+                    results.append({
+                        'title': video.get('title', {}).get('runs', [{}])[0].get('text', 'Unknown'),
+                        'videoId': video.get('videoId'),
+                        'url': f"https://www.youtube.com/watch?v={video.get('videoId')}",
+                        'duration': video.get('lengthText', {}).get('simpleText', '0:00'),
+                        'uploader': video.get('ownerText', {}).get('runs', [{}])[0].get('text', 'Unknown')
+                    })
+                    if len(results) >= max_results: break
+                return results
+        except Exception:
+            return []
+
+    def _search_pwa(self, query: str, max_results: int) -> List[Dict]:
+        """Поиск через Piped/Invidious"""
+        for _ in range(len(self.pwa_instances)):
+            instance = self.pwa_instances[self.current_pwa_index]
+            try:
+                if instance['type'] == 'piped':
+                    url = f"{instance['url']}/search?q={urllib.parse.quote(query)}&filter=music_songs"
+                else:
+                    url = f"{instance['url']}/api/v1/search?q={urllib.parse.quote(query)}&type=video"
+                
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    data = json.loads(response.read().decode())
+                    
+                    videos = []
+                    items = data.get('items', data) if instance['type'] == 'piped' else data
+                    
+                    if not isinstance(items, list): return None
+                    
+                    for item in items[:max_results]:
+                        if instance['type'] == 'piped':
+                            videos.append({
+                                'title': item.get('title'),
+                                'url': f"https://www.youtube.com/watch?v={item.get('url', '').split('v=')[-1]}",
+                                'duration': item.get('duration'),
+                                'uploader': item.get('uploaderName', 'Unknown'),
+                                'video_id': item.get('url', '').split('v=')[-1]
+                            })
+                        else:
+                            videos.append({
+                                'title': item.get('title'),
+                                'url': f"https://www.youtube.com/watch?v={item.get('videoId')}",
+                                'duration': item.get('lengthSeconds'),
+                                'uploader': item.get('author', 'Unknown'),
+                                'video_id': item.get('videoId')
+                            })
+                    return videos
+            except Exception:
+                self.current_pwa_index = (self.current_pwa_index + 1) % len(self.pwa_instances)
+        return None
     
     def get_recommendations(self, track: Dict, max_results: int = 3) -> List[Dict]:
         """Получить рекомендации на основе трека"""
@@ -315,15 +591,21 @@ class MusicStreamer:
             cache_marker = "💾" if self._is_cached(track['url']) else "☁️ "
             duration = self.format_duration(track.get('duration'))
             title = track['title'][:55] + "..." if len(track['title']) > 55 else track['title']
-            print(f"{marker}{cache_marker}{i:2d}. {title}")
+            print(f"{marker}{cache_marker}{dislike_marker}{i:2d}. {title}")
             print(f"      👤 {track['uploader']} | ⏱️  {duration}")
         
         print("="*80)
     
-    def play_playlist(self, query: str = None, use_cache: bool = True) -> None:
-        """Воспроизведение всего плейлиста в фоне"""
-        if not self.playlist:
-            print("❌ Плейлист пуст")
+    def play_playlist(self, use_cache: bool = True) -> None:
+        """Воспроизведение текущего плейлиста"""
+        # Фильтруем дизлайкнутые треки
+        filtered_playlist = [
+            t for t in self.playlist 
+            if not self.get_track_stats(t['url']).get('is_disliked')
+        ]
+        
+        if not filtered_playlist:
+            print("🛑 Плейлист пуст или все треки дизлайкнуты")
             return
         
         # Останавливаем предыдущий если есть (с затуханием)
@@ -332,7 +614,6 @@ class MusicStreamer:
 
         # Сохраняем информацию о текущей сессии
         self.cache_metadata['last_session'] = {
-            'query': query,
             'playlist': self.playlist
         }
         self._save_cache_metadata()
@@ -349,11 +630,13 @@ class MusicStreamer:
             else:
                 playlist_items.append(track['url'])
         
-        cmd = [
-            'mpv',
+        mpv_config_args = self.config.get("mpv_args", [
             '--no-video',
             '--ytdl-format=bestaudio/best',
-            '--force-window=no',
+            '--force-window=no'
+        ])
+        
+        cmd = ['mpv'] + mpv_config_args + [
             '--input-ipc-server=' + self.mpv_socket,
             '--no-terminal'
         ] + playlist_items

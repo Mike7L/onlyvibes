@@ -24,6 +24,23 @@ class MusicApp {
             { type: 'piped', url: 'https://pipedapi.kavin.rocks' }, // Fallback
         ];
         this.currentInstanceIndex = 0;
+        this.fetchConfig();
+    }
+
+    async fetchConfig() {
+        try {
+            // Attempt to load external config if available on the server
+            const res = await fetch('/config.json');
+            if (res.ok) {
+                const config = await res.json();
+                if (config.api_instances) {
+                    this.apiInstances = config.api_instances;
+                    console.log("[i] Loaded external API configuration");
+                }
+            }
+        } catch (e) {
+            // Fallback to hardcoded defaults already in constructor
+        }
     }
 
     async initDB() {
@@ -93,8 +110,254 @@ class MusicApp {
         this.nowPlayingTime = document.getElementById('nowPlayingTime');
         this.statusMsg = document.getElementById('statusMsg');
 
-        this.searchToggleBtn = document.getElementById('searchToggleBtn');
+        // this.searchToggleBtn = document.getElementById('searchToggleBtn'); // REMOVED
         this.searchBarContainer = document.getElementById('searchBarContainer');
+        this.initTerminal();
+    }
+
+    initTerminal() {
+        this.terminalContainer = document.getElementById('terminal-container');
+        this.terminalToggle = document.getElementById('terminal-toggle');
+
+        this.terminalSelectionIndex = 0;
+        this.isTerminalTUI = true;
+
+        this.terminal = new VanillaTerminal({
+            container: '#terminal-container',
+            welcome: 'OnlyMusic CLI v1.1.0 (TUI Mode)<br>Use Arrows to navigate, Enter to search/play, Tab to play.',
+            prompt: 'user@onlymusic:~$ ',
+            onInput: (cmd) => this.handleTerminalCommand(cmd),
+            onKeyDown: (e) => this.handleTerminalKeyDown(e)
+        });
+
+        this.terminalToggle.addEventListener('click', () => {
+            this.terminalContainer.classList.toggle('hidden');
+            if (!this.terminalContainer.classList.contains('hidden')) {
+                this.terminal.inputNode.focus();
+                this.renderCLITUI();
+            }
+        });
+
+        // Close terminal on Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !this.terminalContainer.classList.contains('hidden')) {
+                // If input is not empty, clear it first (standard terminal behavior)
+                if (this.terminal.inputNode.value) {
+                    this.terminal.inputNode.value = '';
+                } else {
+                    this.terminalContainer.classList.add('hidden');
+                }
+            }
+        });
+    }
+
+    handleTerminalKeyDown(e) {
+        if (this.terminalContainer.classList.contains('hidden')) return;
+
+        switch (e.key) {
+            case 'ArrowUp':
+                e.preventDefault();
+                if (this.terminalSelectionIndex > 0) {
+                    this.terminalSelectionIndex--;
+                    this.renderCLITUI();
+                }
+                break;
+            case 'ArrowDown':
+                e.preventDefault();
+                if (this.terminalSelectionIndex < this.tracks.length - 1) {
+                    this.terminalSelectionIndex++;
+                    this.renderCLITUI();
+                }
+                break;
+            case 'ArrowLeft':
+                e.preventDefault();
+                this.seekBackward();
+                this.renderCLITUI();
+                break;
+            case 'ArrowRight':
+                e.preventDefault();
+                this.seekForward();
+                this.renderCLITUI();
+                break;
+            case 'Tab':
+                e.preventDefault();
+                if (this.tracks[this.terminalSelectionIndex]) {
+                    this.playTrack(this.terminalSelectionIndex);
+                    this.renderCLITUI();
+                }
+                break;
+            case 'Enter':
+                // logic handled by vanilla-terminal.js for input
+                // but if input is empty, we handle it as Play/Pause
+                if (!this.terminal.inputNode.value.trim()) {
+                    e.preventDefault();
+                    this.togglePlayPauseAtSelection();
+                    this.renderCLITUI();
+                }
+                break;
+            case 'Delete':
+            case 'Backspace':
+                // Only handle Delete/Backspace as "Remove Track" if Ctrl or if it's specialized?
+                // In tui.py it's Delete. Let's stick to Delete.
+                if (e.key === 'Delete') {
+                    e.preventDefault();
+                    this.deleteTrack(this.terminalSelectionIndex);
+                    this.renderCLITUI();
+                }
+                break;
+        }
+    }
+
+    togglePlayPauseAtSelection() {
+        if (this.terminalSelectionIndex === this.currentTrackIndex) {
+            this.togglePlayPause();
+        } else {
+            this.playTrack(this.terminalSelectionIndex);
+        }
+    }
+
+    seekForward() {
+        if (this.audioPlayer.duration) {
+            this.audioPlayer.currentTime = Math.min(this.audioPlayer.duration, this.audioPlayer.currentTime + 5);
+        }
+    }
+
+    seekBackward() {
+        this.audioPlayer.currentTime = Math.max(0, this.audioPlayer.currentTime - 5);
+    }
+
+    renderCLITUI() {
+        if (this.terminalContainer.classList.contains('hidden')) return;
+
+        this.terminal.clear();
+        this.terminal.print('OnlyMusic CLI v1.1.0 - TUI Mode');
+        this.terminal.print('----------------------------------');
+
+        if (this.tracks.length === 0) {
+            this.terminal.print('<br><i>Playlist is empty. Type a search query below.</i><br>');
+        } else {
+            let output = '<br>';
+            this.tracks.forEach((t, i) => {
+                const isSelected = i === this.terminalSelectionIndex;
+                const isPlaying = i === this.currentTrackIndex;
+                const prefix = isSelected ? '<span style="color:#a78bfa; font-weight:bold;">* </span>' : '  ';
+                const style = isSelected ? 'style="background:rgba(167,139,250,0.2);"' : '';
+                const playingMark = isPlaying ? (this.isPlaying ? ' [PLAYING]' : ' [PAUSED]') : '';
+
+                output += `<div ${style}>${prefix}${this.escapeHtml(t.title)} (${this.formatDuration(t.duration)})${playingMark}</div>`;
+            });
+            this.terminal.print(output);
+        }
+
+        // Progress bar for current track
+        if (this.currentTrackIndex >= 0 && this.audioPlayer.duration) {
+            const pct = this.audioPlayer.currentTime / this.audioPlayer.duration;
+            const barWidth = 30;
+            const pos = Math.floor(pct * barWidth);
+            let bar = '';
+            for (let i = 0; i < barWidth; i++) {
+                if (i === pos) bar += '<span style="color:#22d3ee; font-weight:bold;">●</span>';
+                else if (i < pos) bar += '━';
+                else bar += '─';
+            }
+            this.terminal.print(`<br><span style="color:#94a3b8;">[${bar}]</span> ${this.formatTime(this.audioPlayer.currentTime)} / ${this.formatTime(this.audioPlayer.duration)}`);
+        }
+
+        this.terminal.print('<br><span style="color:#94a3b8; font-size:11px;">↑/↓ Navigate | Enter:Search/Pause | Tab:Play | ←/→ Seek | Del:Remove</span><br>');
+    }
+
+    handleTerminalCommand(commandStr) {
+        const [cmd, ...args] = commandStr.split(' ');
+        const argString = args.join(' ');
+
+        switch (cmd.toLowerCase()) {
+            case 'help':
+                this.terminal.print(`<br>Available commands:<br>
+                &nbsp;&nbsp;play [query]  - Search and play a song<br>
+                &nbsp;&nbsp;search [query]- Search for songs<br>
+                &nbsp;&nbsp;stop / pause  - Pause playback<br>
+                &nbsp;&nbsp;resume        - Resume playback<br>
+                &nbsp;&nbsp;next          - Next track<br>
+                &nbsp;&nbsp;prev          - Previous track<br>
+                &nbsp;&nbsp;ls / list     - Show current playlist<br>
+                &nbsp;&nbsp;clear         - Clear terminal<br>
+                &nbsp;&nbsp;exit          - Close terminal<br>`);
+                break;
+            case 'play':
+                if (!argString) {
+                    if (this.audioPlayer.paused) this.togglePlayPause();
+                    this.terminal.print('Resuming playback...');
+                } else {
+                    this.terminal.print(`Searching and playing: ${argString}...`);
+                    this.searchInput.value = argString;
+                    this.search().then(() => {
+                        if (this.tracks.length > 0) {
+                            this.playTrack(this.tracks.length - 1); // Play the last added track (usually the result search appends?)
+                            // Wait, search implementation appends.
+                            // Let's actually refine search to just play first result if empty or something.
+                            // For now, standard behavior: search adds to list.
+                            // Let's try to play the first NEW result.
+                            this.terminal.print(`Found ${this.tracks.length} tracks. Playing...`);
+                            this.playTrack(this.tracks.length - 1); // Play the most recently added for "play [song]" feel
+                        } else {
+                            this.terminal.print('No results found.');
+                        }
+                    });
+                }
+                break;
+            case 'search':
+                this.searchInput.value = argString;
+                this.search().then(() => {
+                    this.terminal.print(`Added results to playlist.`);
+                    this.listTracksCLI(); // List them
+                });
+                break;
+            case 'stop':
+            case 'pause':
+                this.audioPlayer.pause();
+                this.terminal.print('Music paused.');
+                break;
+            case 'resume':
+                this.audioPlayer.play();
+                this.terminal.print('Music resumed.');
+                break;
+            case 'next':
+                this.playNext();
+                this.terminal.print('Playing next track...');
+                break;
+            case 'prev':
+                this.playPrevious();
+                this.terminal.print('Playing previous track...');
+                break;
+            case 'ls':
+            case 'list':
+                this.listTracksCLI();
+                break;
+            case 'clear':
+                this.terminal.clear();
+                break;
+            case 'exit':
+                this.terminalContainer.classList.add('hidden');
+                break;
+            default:
+                this.terminal.print(`Command not found: ${cmd}`);
+                return false;
+        }
+        this.renderCLITUI();
+        return true;
+    }
+
+    listTracksCLI() {
+        if (this.tracks.length === 0) {
+            this.terminal.print('Playlist is empty.');
+            return;
+        }
+        let output = '<br>Current Playlist:<br>';
+        this.tracks.forEach((t, i) => {
+            const prefix = i === this.currentTrackIndex ? '* ' : '  ';
+            output += `${prefix}${i + 1}. ${t.title} (${t.duration ? this.formatDuration(t.duration) : 'N/A'})<br>`;
+        });
+        this.terminal.print(output);
     }
 
     initAudio() {
@@ -106,12 +369,7 @@ class MusicApp {
     }
 
     initEventListeners() {
-        if (this.searchToggleBtn) {
-            this.searchToggleBtn.addEventListener('click', () => {
-                this.searchBarContainer.classList.toggle('active');
-                if (this.searchBarContainer.classList.contains('active')) this.searchInput.focus();
-            });
-        }
+
         if (this.searchBtn) this.searchBtn.addEventListener('click', () => this.search());
         if (this.searchInput) {
             this.searchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') this.search(); });
@@ -127,7 +385,54 @@ class MusicApp {
 
     async registerServiceWorker() {
         if ('serviceWorker' in navigator) {
-            try { await navigator.serviceWorker.register('service-worker.js'); } catch (e) { }
+            try {
+                const registration = await navigator.serviceWorker.register('service-worker.js');
+
+                // Check for updates on page load
+                registration.addEventListener('updatefound', () => {
+                    const newWorker = registration.installing;
+                    newWorker.addEventListener('statechange', () => {
+                        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                            this.showUpdateNotification();
+                        }
+                    });
+                });
+
+                // Handle waiting service worker (if any)
+                if (registration.waiting) {
+                    this.showUpdateNotification();
+                }
+
+            } catch (e) {
+                console.error('SW Registration Failed:', e);
+            }
+
+            // Reload when new SW is activated
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                window.location.reload();
+            });
+        }
+    }
+
+    showUpdateNotification() {
+        const toast = document.getElementById('updateToast');
+        if (toast) {
+            toast.classList.add('visible');
+            toast.querySelector('#reloadBtn').addEventListener('click', () => {
+                this.updateServiceWorker();
+            });
+        }
+    }
+
+    updateServiceWorker() {
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistration().then(reg => {
+                if (reg && reg.waiting) {
+                    reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                } else {
+                    window.location.reload();
+                }
+            });
         }
     }
 
@@ -159,7 +464,7 @@ class MusicApp {
         if (!query) return;
 
         this.showStatus('Searching...');
-        if (this.searchBarContainer) this.searchBarContainer.classList.remove('active');
+        // if (this.searchBarContainer) this.searchBarContainer.classList.remove('active'); // REMOVED
 
         for (let i = 0; i < this.apiInstances.length; i++) {
             const instance = this.apiInstances[this.currentInstanceIndex];
@@ -183,6 +488,7 @@ class MusicApp {
                     if (addedCount > 0) {
                         this.saveTracks();
                         this.renderTracks();
+                        this.renderCLITUI();
                         this.showStatus(`Added ${addedCount} tracks`);
                     } else {
                         this.showStatus('Already in playlist');
@@ -273,6 +579,7 @@ class MusicApp {
 
         this.updateNowPlaying();
         this.renderTracks();
+        this.renderCLITUI();
 
         try {
             // 1. Try DB Cache
@@ -380,6 +687,7 @@ class MusicApp {
         } else if (index < this.currentTrackIndex) {
             this.currentTrackIndex--;
         }
+        this.renderCLITUI();
     }
 
     updateProgress() {
@@ -389,21 +697,31 @@ class MusicApp {
         if (this.nowPlayingTime) {
             this.nowPlayingTime.textContent = `${this.formatTime(this.audioPlayer.currentTime)} / ${this.formatTime(this.audioPlayer.duration)}`;
         }
+        // Throttle terminal update slightly or just do it? Terminal is clear/print, maybe every second?
+        // Let's do it every second for better performance
+        const now = Date.now();
+        if (!this._lastTerminalUpdate || now - this._lastTerminalUpdate > 1000) {
+            this.renderCLITUI();
+            this._lastTerminalUpdate = now;
+        }
     }
 
     seekToPosition(e) {
         const rect = e.currentTarget.getBoundingClientRect();
         const percent = (e.clientX - rect.left) / rect.width;
         if (this.audioPlayer.duration) this.audioPlayer.currentTime = percent * this.audioPlayer.duration;
+        this.renderCLITUI();
     }
 
     updatePlayBtnState() {
         if (this.playIcon) this.playIcon.textContent = !this.audioPlayer.paused ? 'pause' : 'play_arrow';
+        this.renderCLITUI();
     }
 
     updateNowPlaying() {
         const track = this.tracks[this.currentTrackIndex];
         if (this.nowPlayingTitle) this.nowPlayingTitle.textContent = track ? track.title : "Not Playing";
+        this.renderCLITUI();
     }
 
     showStatus(msg, dur = 3000) {
@@ -433,5 +751,8 @@ class MusicApp {
 }
 
 // Make app instance global
-const app = new MusicApp();
-window.app = app;
+// Make app instance global
+// Wait for DOM
+document.addEventListener('DOMContentLoaded', () => {
+    window.app = new MusicApp();
+});

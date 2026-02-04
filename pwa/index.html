@@ -30,9 +30,7 @@
         <!-- Top App Bar -->
         <header class="top-app-bar glass">
             <div class="headline">OnlyMusic</div>
-            <button class="icon-btn" id="searchToggleBtn">
-                <span class="material-symbols-rounded">search</span>
-            </button>
+
         </header>
 
         <!-- Search Bar (Collapsible) -->
@@ -48,6 +46,12 @@
 
         <!-- Status Message (Toast) -->
         <div id="statusMsg" class="snackbar"></div>
+
+        <!-- New Version Toast -->
+        <div id="updateToast" class="update-toast">
+            <span>New version available</span>
+            <button id="reloadBtn">Refresh</button>
+        </div>
 
         <!-- Main Content (Track List) -->
         <main class="content-container">
@@ -93,6 +97,15 @@
         <audio id="audioPlayer" preload="auto"></audio>
     </div>
 
+
+    <!-- Terminal Overlay -->
+    <div id="terminal-container" class="hidden"></div>
+    <div id="terminal-toggle" class="terminal-toggle-btn">
+        <span class="material-symbols-rounded">terminal</span>
+    </div>
+
+    <!-- Scripts -->
+    <script src="lib/vanilla-terminal.js"></script>
     <script src="app.js"></script>
 </body>
 

@@ -4,21 +4,18 @@ import urllib.error
 import time
 import json
 
-INSTANCES = [
-    'https://iv.melmac.space',
-    'https://invidious.flokinet.to',
-    'https://invidious.privacydev.net',
-    'https://invidious.protokolla.fi',
-    'https://invidious.private.coffee',
-    'https://yt.drgnz.club',
-    'https://iv.datura.network',
-    'https://invidious.fdn.fr',
-    'https://invidious.drgns.space',
-    'https://inv.us.projectsegfau.lt',
-    'https://invidious.jing.rocks',
-    'https://invidious.privacyredirect.com',
-    'https://invidious.reallyaweso.me'
-]
+try:
+    with open('../config.json', 'r') as f:
+        config = json.load(f)
+        INSTANCES = [inst['url'] for inst in config.get('api_instances', []) if inst['type'] == 'invidious']
+except:
+    INSTANCES = [
+        'https://iv.melmac.space',
+        'https://invidious.reallyaweso.me',
+        'https://invidious.flokinet.to',
+        'https://invidious.privacydev.net',
+        'https://invidious.protokolla.fi',
+    ]
 
 def check_instance(instance):
     url = f"{instance}/api/v1/search?q=test&type=video"

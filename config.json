@@ -1,0 +1,28 @@
+{
+    "cache_dir": "/Users/micha/Dropbox/Projects/onlymusic/music_cache",
+    "api_instances": [
+        {
+            "type": "invidious",
+            "url": "https://iv.melmac.space"
+        },
+        {
+            "type": "invidious",
+            "url": "https://invidious.reallyaweso.me"
+        },
+        {
+            "type": "invidious",
+            "url": "https://invidious.protokolla.fi"
+        },
+        {
+            "type": "piped",
+            "url": "https://pipedapi.kavin.rocks"
+        }
+    ],
+    "search_max_results": 10,
+    "audio_quality": "128k",
+    "mpv_args": [
+        "--no-video",
+        "--volume=80",
+        "--msg-level=all=status"
+    ]
+}

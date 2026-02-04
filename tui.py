@@ -71,6 +71,7 @@ class TUI:
         curses.init_pair(5, curses.COLOR_CYAN, -1) # Progress bar
         curses.init_pair(6, curses.COLOR_RED, -1) # Playhead
         curses.init_pair(7, curses.COLOR_BLUE, -1) # Caching progress
+        curses.init_pair(8, curses.COLOR_MAGENTA, -1) # Liked indicator
 
         # Caching Worker
         self.cache_queue = queue.Queue()
@@ -173,6 +174,8 @@ class TUI:
             return
 
         track = rect['track']
+        stats = self.streamer.get_track_stats(track['url'])
+        is_disliked = stats.get('is_disliked', False)
         
         color_attr = 0
         if is_selected:
@@ -180,10 +183,15 @@ class TUI:
             if track.get('is_cached'):
                 color_attr |= curses.A_BOLD
         else:
-            if track.get('is_cached'):
+            if is_disliked:
+                color_attr = curses.A_DIM | curses.color_pair(3) # Grey for disliked
+            elif track.get('is_cached'):
                 color_attr = curses.A_BOLD | curses.color_pair(4) # Yellow for cached
             else:
                 color_attr = curses.A_DIM | curses.color_pair(3)
+        
+        if is_disliked and not is_selected:
+            color_attr = curses.A_DIM # Ensure it looks greyed out
         
         # Mark duplicates with dim style
         if track.get('is_duplicate'):
@@ -191,12 +199,30 @@ class TUI:
 
         # Draw Background/Border
         try:
-            # First line: Title with duplicate indicator
+            # First line: Title with duplicate indicator and Like star
             if 0 <= y < max_y:
+                 stats = self.streamer.get_track_stats(track['url'])
+                 like_str = " ★ " if stats.get('is_liked') else "   "
                  prefix = "[↻] " if track.get('is_duplicate') else ""
-                 title = prefix + track['title'][:w-10-len(prefix)]
-                 self.stdscr.addstr(y, x, title, color_attr)
+                 
+                 # Source tag
+                 source = track.get('search_method', 'YT')
+                 source_str = f"[{source}] "
+                 
+                 title = like_str + prefix + source_str + track['title'][:w-20-len(prefix)-len(source_str)]
+                 
+                 # Draw like star in magenta if liked
+                 if stats.get('is_liked'):
+                     self.stdscr.addstr(y, x, " ★ ", curses.color_pair(8) | curses.A_BOLD)
+                     self.stdscr.addstr(y, x + 3, prefix + source_str + title[len(like_str+prefix+source_str):], color_attr)
+                 else:
+                     self.stdscr.addstr(y, x, title, color_attr)
+                 
+                 # Play count and duration
+                 play_count = stats.get('play_count', 0)
+                 count_str = f" {play_count}▶" if play_count > 0 else ""
                  dur_str = self.streamer.format_duration(track.get('duration', 0))
+                 self.stdscr.addstr(y, w - len(dur_str) - len(count_str) - 1, count_str, curses.A_DIM)
                  self.stdscr.addstr(y, w - len(dur_str) - 1, dur_str, color_attr)
                  
             # Second line: Symbolic Duration / Progress
@@ -332,7 +358,24 @@ class TUI:
             if key == -1:
                 continue
 
-            # Process Key
+            # Check if this is a single key press or part of a burst (paste)
+            next_key = self.stdscr.getch()
+            is_single = (next_key == -1)
+            if not is_single:
+                # Put it back or process as sequence
+                keys = [key, next_key]
+                while True:
+                    nk = self.stdscr.getch()
+                    if nk == -1: break
+                    keys.append(nk)
+                
+                # If it's a burst, we treat all as text input for search
+                for k in keys:
+                    if 32 <= k <= 126:
+                        self.input_buffer += chr(k)
+                continue
+
+            # Process Single Key Commands
             if key == 10: # Enter
                 if self.input_buffer.strip():
                     self.perform_search()
@@ -362,6 +405,16 @@ class TUI:
             
             elif key == curses.KEY_DC or key == 330 or key == 24: # Delete or Ctrl-X
                 self.delete_current()
+
+            elif key in (ord('+'), ord('*')):
+                if 0 <= self.selection_index < len(self.tracks):
+                    track = self.tracks[self.selection_index]
+                    self.streamer.toggle_like(track['url'])
+
+            elif key in (ord('/'), ord('-')):
+                if 0 <= self.selection_index < len(self.tracks):
+                    track = self.tracks[self.selection_index]
+                    self.streamer.toggle_dislike(track['url'])
 
             elif key == 27: # Esc
                 if self.input_buffer:
@@ -474,12 +527,13 @@ class TUI:
             self.play_current()
 
     def play_current(self):
-        if not self.tracks or self.selection_index < 0: return
-        track = self.tracks[self.selection_index]
-        self.msg = f"Playing..."
-        self.streamer.playlist = [track]
-        self.recommendations_added = False  # Сбрасываем флаг при новом воспроизведении
-        threading.Thread(target=self._play_thread, daemon=True).start()
+        if 0 <= self.selection_index < len(self.tracks):
+            track = self.tracks[self.selection_index]
+            self.streamer.increment_play_count(track['url'])
+            self.streamer.playlist = [track]
+            self.streamer.current_index = 0
+            self.recommendations_added = False
+            threading.Thread(target=self._play_thread, daemon=True).start()
 
     def _play_thread(self):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):

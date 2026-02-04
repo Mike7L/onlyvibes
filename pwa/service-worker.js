@@ -1,24 +1,25 @@
-// OnlyMusic Service Worker
-const CACHE_NAME = 'onlymusic-v2';
-const urlsToCache = [
+const CACHE_NAME = 'onlymusic-v3';
+
+const ASSETS_TO_CACHE_IMMEDIATELY = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './lib/vanilla-terminal.js',
   './manifest.json',
   './icon.svg'
 ];
 
-// Install event - cache files
+// Install: Cache core assets
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(urlsToCache))
+      .then(cache => cache.addAll(ASSETS_TO_CACHE_IMMEDIATELY))
       .then(() => self.skipWaiting())
   );
 });
 
-// Activate event - clean old caches
+// Activate: Clean up old caches
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(cacheNames => {
@@ -33,30 +34,71 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Fetch event - serve from cache, fallback to network
+// Fetch: Apply different strategies based on request type
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Skip caching for API calls (Gateway)
-  if (url.pathname.startsWith('/api/')) {
+  // 1. API Calls: Network Only (Audio streaming/Search)
+  if (url.pathname.startsWith('/api/') || url.href.includes('pipedapi') || url.href.includes('invidious')) {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request)
-      .then(response => {
-        if (response) return response;
-        return fetch(event.request).then(response => {
+  // 2. HTML: Network First, Fallback to Cache (Ensures fresh content)
+  if (event.request.mode === 'navigate' || event.request.destination === 'document') {
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
           if (!response || response.status !== 200 || response.type !== 'basic') {
             return response;
           }
           const responseToCache = response.clone();
-          caches.open(CACHE_NAME).then(cache => {
-            cache.put(event.request, responseToCache);
-          });
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseToCache));
           return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // 3. Static Assets (JS, CSS, JSON): Stale-While-Revalidate
+  // Serve cached version immediately, but update cache in background
+  if (event.request.destination === 'script' ||
+    event.request.destination === 'style' ||
+    event.request.destination === 'manifest') {
+    event.respondWith(
+      caches.open(CACHE_NAME).then(cache => {
+        return cache.match(event.request).then(cachedResponse => {
+          const fetchPromise = fetch(event.request).then(networkResponse => {
+            if (networkResponse && networkResponse.status === 200) {
+              cache.put(event.request, networkResponse.clone());
+            }
+            return networkResponse;
+          });
+          return cachedResponse || fetchPromise;
         });
       })
+    );
+    return;
+  }
+
+  // 4. Images/Fonts: Cache First (They rarely change)
+  if (event.request.destination === 'image' || event.request.destination === 'font') {
+    event.respondWith(
+      caches.match(event.request).then(response => {
+        return response || fetch(event.request).then(networkResponse => {
+          return caches.open(CACHE_NAME).then(cache => {
+            cache.put(event.request, networkResponse.clone());
+            return networkResponse;
+          });
+        });
+      })
+    );
+    return;
+  }
+
+  // 5. Default: Network First
+  event.respondWith(
+    fetch(event.request).catch(() => caches.match(event.request))
   );
 });
 
