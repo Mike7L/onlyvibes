@@ -16,7 +16,6 @@ KEYBOARD SHORTCUTS:
     
   Management:
     Delete/Ctrl-X   - Remove track from list and cache
-    m               - Set maximum track duration (minutes)
 """
 import curses
 import locale
@@ -74,6 +73,18 @@ class TUI:
         curses.init_pair(7, curses.COLOR_BLUE, -1) # Caching progress
         curses.init_pair(8, curses.COLOR_MAGENTA, -1) # Liked indicator
 
+        # MPV State Cache
+        self.mpv_state = {
+            'time-pos': 0,
+            'duration': 0,
+            'playlist-pos': None,
+            'playlist-count': 0,
+            'pause': False
+        }
+        
+        # Start MPV Monitor Thread
+        threading.Thread(target=self._mpv_monitor_thread, daemon=True).start()
+
         # Caching Worker
         self.cache_queue = queue.Queue()
         self.caching_now = set() # Set of URLs currently being cached
@@ -84,6 +95,22 @@ class TUI:
         
         # Recommendations state
         self.recommendations_added = False
+        
+    def _mpv_monitor_thread(self):
+        """Background thread to poll MPV properties"""
+        while True:
+            try:
+                if self.streamer.mpv_process:
+                    # Batch fetch could be optimized but single calls are fine in bg thread
+                    self.mpv_state['time-pos'] = self.streamer._get_mpv_property('time-pos')
+                    self.mpv_state['playlist-pos'] = self.streamer._get_mpv_property('playlist-pos')
+                    # Could add more if needed
+                else:
+                    self.mpv_state['time-pos'] = 0
+                    self.mpv_state['playlist-pos'] = None
+            except:
+                pass
+            time.sleep(0.1)
 
     def _cache_worker(self):
         while True:
@@ -132,36 +159,42 @@ class TUI:
         return tracks
 
     def layout_tracks(self):
-        # Vertical list.
+        # Optimized Virtual Scrolling
         rects = []
         max_y, max_x = self.stdscr.getmaxyx()
         
-        current_y = 0
-        current_x = 0
+        # Area available for tracks (exclude bottom input/help lines)
+        view_height = max_y - 2 
         
         track_height = 3 # Fixed height per track
+        total_content_height = len(self.tracks) * track_height
         
-        for index, track in enumerate(self.tracks):
+        # Calculate start and end indices based on scroll_y
+        start_index = max(0, int(self.scroll_y // track_height))
+        # Add buffer to ensure smooth scrolling
+        end_index = min(len(self.tracks), int((self.scroll_y + view_height) // track_height) + 2)
+        
+        for i in range(start_index, end_index):
+             track = self.tracks[i]
+             current_y = i * track_height
+             
              item = {
                 'y': current_y,
-                'x': current_x,
+                'x': 0,
                 'h': track_height,
                 'w': max_x, # Full width
                 'track': track,
-                'index': index
+                'index': i
             }
              rects.append(item)
-             current_y += track_height
              
-        return rects, current_y
+        return rects, total_content_height
 
     def get_progress(self):
-        # Poll streamer via private method if possible or add public one.
-        # Streamer has _get_mpv_property
         try:
-            time_pos = self.streamer._get_mpv_property('time-pos')
-            if time_pos is not None:
-                return float(time_pos)
+            val = self.mpv_state.get('time-pos')
+            if val is not None:
+                return float(val)
         except:
             pass
         return 0
@@ -171,6 +204,7 @@ class TUI:
         x, h, w = rect['x'], rect['h'], rect['w']
         max_y, max_x = self.stdscr.getmaxyx()
         
+        # Clipping (Should be handled by layout_tracks largely, but safety check)
         if y + h <= 0 or y >= max_y:
             return
 
@@ -200,22 +234,31 @@ class TUI:
 
         # Draw Background/Border
         try:
-            # First line: Title with duplicate indicator and Like star
+            # First line: Title with duplicate indicator and Like/Dislike icons
             if 0 <= y < max_y:
                  stats = self.streamer.get_track_stats(track['url'])
-                 like_str = " ★ " if stats.get('is_liked') else "   "
+                 
+                 icon_str = "   "
+                 if stats.get('is_liked'):
+                     icon_str = " 👍"
+                 elif stats.get('is_disliked'):
+                     icon_str = " 👎"
+                 
                  prefix = "[↻] " if track.get('is_duplicate') else ""
                  
                  # Source tag
                  source = track.get('search_method', 'YT')
                  source_str = f"[{source}] "
                  
-                 title = like_str + prefix + source_str + track['title'][:w-20-len(prefix)-len(source_str)]
+                 title = icon_str + " " + prefix + source_str + track['title'][:w-20-len(prefix)-len(source_str)]
                  
-                 # Draw like star in magenta if liked
+                 # Draw icons with colors
                  if stats.get('is_liked'):
-                     self.stdscr.addstr(y, x, " ★ ", curses.color_pair(8) | curses.A_BOLD)
-                     self.stdscr.addstr(y, x + 3, prefix + source_str + title[len(like_str+prefix+source_str):], color_attr)
+                     self.stdscr.addstr(y, x, " 👍 ", curses.color_pair(8) | curses.A_BOLD)
+                     self.stdscr.addstr(y, x + 3, prefix + source_str + title[len(icon_str)+1+len(prefix)+len(source_str):], color_attr)
+                 elif stats.get('is_disliked'):
+                     self.stdscr.addstr(y, x, " 👎 ", curses.color_pair(3) | curses.A_BOLD)
+                     self.stdscr.addstr(y, x + 3, prefix + source_str + title[len(icon_str)+1+len(prefix)+len(source_str):], color_attr)
                  else:
                      self.stdscr.addstr(y, x, title, color_attr)
                  
@@ -272,6 +315,22 @@ class TUI:
                             if pos < bar_len:
                                 self.stdscr.addch(bar_y, x + 1 + pos, "●", curses.color_pair(6) | curses.A_BOLD)
                                 
+            # Third line: Metadata (Downloaded / Last Played) FOR SELECTED TRACK ONLY
+            if is_selected and 0 <= y + 2 < max_y:
+                 meta_y = y + 2
+                 date_parts = []
+                 if stats.get('downloaded_at'):
+                     date_parts.append(f"⬇ {stats['downloaded_at']}")
+                 if stats.get('last_played_at'):
+                     date_parts.append(f"👂 {stats['last_played_at']}")
+                 
+                 if date_parts:
+                     date_str = "  ".join(date_parts)
+                     # Ensure it fits
+                     if len(date_str) > w - 4:
+                         date_str = date_str[:w-5] + "…"
+                     self.stdscr.addstr(meta_y, x + 1, date_str, curses.A_DIM | curses.color_pair(5))
+
         except curses.error:
             pass
 
@@ -284,12 +343,12 @@ class TUI:
             # Help line with keyboard shortcuts
             self.stdscr.move(help_y, 0)
             self.stdscr.clrtoeol()
-            help_text = "↑/↓:Nav  Enter:Srch/Pl  Tab:Pl  ←/→:Seek  Del:Rm  m:MaxDur  Esc:Exit"
+            help_text = "↑/↓:Navigate  Enter:Search/Play  Tab:Play  l/d:Like/Dislike  Del:Remove  Esc:Clear/Exit"
             if len(help_text) <= max_x:
                 self.stdscr.addstr(help_y, 0, help_text, curses.A_DIM)
             else:
                 # Shortened version for narrow terminals
-                help_text = "↑/↓  Ent:Sr/Pl  Tab:Pl  ←/→:Sk  Del:Rm  m:Dur"
+                help_text = "↑/↓  Enter:Search/Play  Tab:Play  ←/→:Seek  Del:Remove"
                 self.stdscr.addstr(help_y, 0, help_text[:max_x-1], curses.A_DIM)
             
             # Clear input line
@@ -317,19 +376,24 @@ class TUI:
         except curses.error:
             pass
 
-    def ensure_visible(self, index, rects):
-        if not rects: return
-        target = rects[index]
+    def ensure_visible(self, index, rects=None):
+        # rects argument is deprecated/unused for positioning calculation
+        if index < 0 or index >= len(self.tracks): return
+        
+        track_height = 3
+        target_y = index * track_height
+        target_h = track_height
+        
         max_y, max_x = self.stdscr.getmaxyx()
         
         # Only tracks area is scrollable. Input is fixed at bottom.
         # Reserve 2 lines at bottom: help line + input line
         view_height = max_y - 2
         
-        if target['y'] - self.scroll_y < 0:
-            self.scroll_y = target['y'] 
-        elif target['y'] + target['h'] - self.scroll_y > view_height:
-             self.scroll_y = target['y'] + target['h'] - view_height
+        if target_y - self.scroll_y < 0:
+            self.scroll_y = target_y
+        elif target_y + target_h - self.scroll_y > view_height:
+             self.scroll_y = target_y + target_h - view_height
 
     def run(self):
         while True:
@@ -346,8 +410,8 @@ class TUI:
                 self.draw_track(rect, is_selected)
             
             # Update scroll position after search completes
-            if self.selection_index >= 0 and rects:
-                self.ensure_visible(self.selection_index, rects)
+            if self.selection_index >= 0 and self.tracks:
+                self.ensure_visible(self.selection_index)
             
             self.draw_input()
             
@@ -390,11 +454,11 @@ class TUI:
             elif key == curses.KEY_UP:
                 if self.selection_index > 0:
                     self.selection_index -= 1
-                    self.ensure_visible(self.selection_index, rects)
+                    self.ensure_visible(self.selection_index)
             elif key == curses.KEY_DOWN:
                 if self.selection_index < len(self.tracks) - 1:
                     self.selection_index += 1
-                    self.ensure_visible(self.selection_index, rects)
+                    self.ensure_visible(self.selection_index)
 
             elif key == curses.KEY_LEFT:
                  self.streamer._send_mpv_command(["seek", "-5", "relative"])
@@ -407,18 +471,15 @@ class TUI:
             elif key == curses.KEY_DC or key == 330 or key == 24: # Delete or Ctrl-X
                 self.delete_current()
 
-            elif key in (ord('+'), ord('*')):
+            elif key in (ord('+'), ord('*'), ord('l')):
                 if 0 <= self.selection_index < len(self.tracks):
                     track = self.tracks[self.selection_index]
                     self.streamer.toggle_like(track['url'])
 
-            elif key in (ord('/'), ord('-')):
+            elif key in (ord('/'), ord('-'), ord('d')):
                 if 0 <= self.selection_index < len(self.tracks):
                     track = self.tracks[self.selection_index]
                     self.streamer.toggle_dislike(track['url'])
-
-            elif key == ord('m'):
-                self.set_max_duration()
 
             elif key == 27: # Esc
                 if self.input_buffer:
@@ -553,9 +614,9 @@ class TUI:
             self.recommendations_added = False
             return
         
-        # Получаем индекс текущего трека в плейлисте mpv
+        # Получаем индекс текущего трека в плейлисте mpv из кеша состояния
         try:
-            playlist_pos = self.streamer._get_mpv_property('playlist-pos')
+            playlist_pos = self.mpv_state.get('playlist-pos')
             if playlist_pos is None:
                 return
             
@@ -624,60 +685,6 @@ class TUI:
              self.selection_index = len(self.tracks) - 1
         if self.selection_index < 0 and self.tracks:
              self.selection_index = 0
-
-    def set_max_duration(self):
-        """Интерактивная установка максимальной длительности"""
-        max_y, max_x = self.stdscr.getmaxyx()
-        input_y = max_y - 1
-        prompt = "Max Duration (min, 0 for off): "
-        
-        self.stdscr.move(input_y, 0)
-        self.stdscr.clrtoeol()
-        self.stdscr.addstr(input_y, 0, prompt, curses.A_BOLD)
-        curses.curs_set(1)
-        self.stdscr.refresh()
-        
-        # Simple input loop
-        dur_input = ""
-        while True:
-            k = self.stdscr.getch()
-            if k == 10: # Enter
-                break
-            elif k == 27: # Esc
-                dur_input = None
-                break
-            elif k in (curses.KEY_BACKSPACE, 127, 8):
-                dur_input = dur_input[:-1]
-            elif ord('0') <= k <= ord('9'):
-                dur_input += chr(k)
-            
-            # Redraw input
-            self.stdscr.move(input_y, len(prompt))
-            self.stdscr.clrtoeol()
-            self.stdscr.addstr(input_y, len(prompt), dur_input, curses.color_pair(2))
-            self.stdscr.refresh()
-
-        if dur_input is not None:
-            try:
-                mins = int(dur_input)
-                secs = mins * 60
-                self.streamer.config["max_duration"] = secs
-                
-                # Save to config.json
-                config_path = Path(__file__).parent / "config.json"
-                try:
-                    with open(config_path, 'w') as f:
-                        json.dump(self.streamer.config, f, indent=4)
-                except: pass
-                
-                if mins == 0:
-                    self.msg = "Max duration disabled"
-                else:
-                    self.msg = f"Max duration set to {mins} min"
-            except:
-                self.msg = "Invalid input"
-        
-        curses.curs_set(0)
 
 def main():
     try:

@@ -12,6 +12,7 @@ import os
 import hashlib
 import threading
 import time
+from datetime import datetime
 import socket
 import select
 import termios
@@ -262,6 +263,8 @@ class MusicStreamer:
         if stream_url:
             if self._download_direct(stream_url, cache_path, show_progress):
                 self._save_metadata_entry(track, cache_path, download_method="PWA")
+                # Запускаем фоновую очистку после успешного скачивания
+                threading.Thread(target=self._enforce_cache_limit, daemon=True).start()
                 return True
 
         # 2. Fallback на yt-dlp
@@ -276,6 +279,8 @@ class MusicStreamer:
         try:
             subprocess.run(cmd, check=True, capture_output=not show_progress)
             self._save_metadata_entry(track, cache_path, download_method="YTDLP")
+            # Запускаем фоновую очистку после успешного скачивания
+            threading.Thread(target=self._enforce_cache_limit, daemon=True).start()
             return True
         except subprocess.CalledProcessError as e:
             if show_progress:
@@ -302,10 +307,12 @@ class MusicStreamer:
             'uploader': track['uploader'],
             'duration': track['duration'],
             'cached_at': str(new_path.stat().st_mtime),
+            'downloaded_at': self.cache_metadata['files'].get(url, {}).get('downloaded_at', datetime.now().strftime("%Y-%m-%d %H:%M")), # Keep original or set new
             'filename': new_path.name,
             'search_method': search_method,
             'download_method': download_method,
             'play_count': self.cache_metadata['files'].get(url, {}).get('play_count', 0),
+            'last_played_at': self.cache_metadata['files'].get(url, {}).get('last_played_at'),
             'is_liked': self.cache_metadata['files'].get(url, {}).get('is_liked', False),
             'is_disliked': self.cache_metadata['files'].get(url, {}).get('is_disliked', False)
         }
@@ -317,16 +324,23 @@ class MusicStreamer:
         if 'files' in self.cache_metadata and url in self.cache_metadata['files']:
             current = self.cache_metadata['files'][url].get('play_count', 0)
             self.cache_metadata['files'][url]['play_count'] = current + 1
+            self.cache_metadata['files'][url]['last_played_at'] = datetime.now().strftime("%Y-%m-%d %H:%M")
             self._save_cache_metadata()
 
     def toggle_like(self, url: str) -> bool:
         """Переключить статус 'лайка'"""
         if 'files' in self.cache_metadata and url in self.cache_metadata['files']:
+            # Если трек дизлайкнут, то лайк просто снимает дизлайк (нейтральное состояние)
+            if self.cache_metadata['files'][url].get('is_disliked', False):
+                self.cache_metadata['files'][url]['is_disliked'] = False
+                self._save_cache_metadata()
+                return False # Теперь нейтрально
+                
             current = self.cache_metadata['files'][url].get('is_liked', False)
             new_status = not current
             self.cache_metadata['files'][url]['is_liked'] = new_status
             if new_status:
-                self.cache_metadata['files'][url]['is_disliked'] = False # Лайк убирает дизлайк
+                self.cache_metadata['files'][url]['is_disliked'] = False
             self._save_cache_metadata()
             return new_status
         return False
@@ -334,11 +348,17 @@ class MusicStreamer:
     def toggle_dislike(self, url: str) -> bool:
         """Переключить статус 'дизлайка'"""
         if 'files' in self.cache_metadata and url in self.cache_metadata['files']:
+            # Если трек лайкнут, то дизлайк просто снимает лайк (нейтральное состояние)
+            if self.cache_metadata['files'][url].get('is_liked', False):
+                self.cache_metadata['files'][url]['is_liked'] = False
+                self._save_cache_metadata()
+                return False # Теперь нейтрально
+                
             current = self.cache_metadata['files'][url].get('is_disliked', False)
             new_status = not current
             self.cache_metadata['files'][url]['is_disliked'] = new_status
             if new_status:
-                self.cache_metadata['files'][url]['is_liked'] = False # Дизлайк убирает лайк
+                self.cache_metadata['files'][url]['is_liked'] = False
             self._save_cache_metadata()
             return new_status
         return False
@@ -350,9 +370,112 @@ class MusicStreamer:
             return {
                 'play_count': meta.get('play_count', 0),
                 'is_liked': meta.get('is_liked', False),
-                'is_disliked': meta.get('is_disliked', False)
+                'is_disliked': meta.get('is_disliked', False),
+                'downloaded_at': meta.get('downloaded_at'),
+                'last_played_at': meta.get('last_played_at')
             }
         return {'play_count': 0, 'is_liked': False, 'is_disliked': False}
+    
+    def _enforce_cache_limit(self) -> None:
+        """Обеспечить лимит размера кеша (удалять старые треки)"""
+        try:
+            max_size_mb = self.config.get("max_cache_size_mb", 10240) # 10 GB default
+            max_size_bytes = max_size_mb * 1024 * 1024
+            
+            # 1. Считаем текущий размер
+            files = list(self.cache_dir.glob("*.m4a"))
+            total_size = sum(f.stat().st_size for f in files)
+            
+            if total_size <= max_size_bytes:
+                return
+                
+            print(f"\n🧹 Очистка кеша: {total_size / (1024*1024):.1f}MB > {max_size_mb}MB")
+            
+            # 2. Собираем информацию о файлах для сортировки
+            candidates = []
+            for f in files:
+                url = None
+                # Пытаемся найти URL по имени файла в метаданных (обратный поиск)
+                # Это медленно, но надежно. Или можно хранить filename -> url маппинг
+                # Для скорости просто проитерируемся один раз по метаданным
+                pass
+            
+            # Build filename -> metadata map
+            filename_map = {}
+            if 'files' in self.cache_metadata:
+                for u, meta in self.cache_metadata['files'].items():
+                    fname = meta.get('filename')
+                    if fname:
+                        filename_map[fname] = {'url': u, **meta}
+
+            current_playing_url = None
+            if self.playlist and 0 <= self.current_index < len(self.playlist):
+                current_playing_url = self.playlist[self.current_index]['url']
+
+            for f in files:
+                meta = filename_map.get(f.name)
+                
+                # Timestamp скачивания
+                ts_download = f.stat().st_mtime
+                if meta and meta.get('downloaded_at'):
+                    try:
+                        dt = datetime.strptime(meta['downloaded_at'], "%Y-%m-%d %H:%M")
+                        ts_download = dt.timestamp()
+                    except: pass
+                
+                # Timestamp прослушивания
+                ts_play = 0
+                if meta and meta.get('last_played_at'):
+                    try:
+                        dt = datetime.strptime(meta['last_played_at'], "%Y-%m-%d %H:%M")
+                        ts_play = dt.timestamp()
+                    except: pass
+                
+                effective_ts = max(ts_download, ts_play)
+                
+                # Не удаляем текущий играющий трек
+                if meta and meta.get('url') == current_playing_url:
+                    effective_ts = float('inf') 
+                
+                candidates.append({
+                    'path': f,
+                    'size': f.stat().st_size,
+                    'ts': effective_ts,
+                    'url': meta['url'] if meta else None
+                })
+            
+            # 3. Сортируем: сначала старые (меньший ts)
+            candidates.sort(key=lambda x: x['ts'])
+            
+            # 4. Удаляем пока не впишемся в лимит
+            deleted_count = 0
+            freed_space = 0
+            
+            for item in candidates:
+                if total_size <= max_size_bytes:
+                    break
+                
+                if item['ts'] == float('inf'): # Skip current track
+                    continue
+                    
+                try:
+                    item['path'].unlink()
+                    total_size -= item['size']
+                    freed_space += item['size']
+                    deleted_count += 1
+                    
+                    # Удаляем из метаданных
+                    if item['url'] and item['url'] in self.cache_metadata.get('files', {}):
+                        del self.cache_metadata['files'][item['url']]
+                except:
+                    pass
+            
+            if deleted_count > 0:
+                self._save_cache_metadata()
+                print(f"🧹 Удалено {deleted_count} старых треков (-{freed_space / (1024*1024):.1f} MB)")
+                
+        except Exception as e:
+            print(f"⚠️ Ошибка при очистке кеша: {e}")
     
     def _precache_playlist(self, start_index: int = 0, max_tracks: int = 3) -> None:
         """Предварительное кеширование следующих треков в фоне"""
