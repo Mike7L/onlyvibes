@@ -642,6 +642,7 @@ body {
     color: #fff;
     transition: all 0.2s ease;
     border: 1px solid rgba(255, 255, 255, 0.1);
+    display: none;
 }
 
 .terminal-toggle-btn:hover {
@@ -651,26 +652,50 @@ body {
 
 @media (max-width: 640px) {
     :root {
-        --bottom-player-height: 90px;
+        --bottom-player-height: 108px;
     }
 
     .top-app-bar {
-        height: 62px;
+        height: 56px;
         padding: 0 16px;
     }
 
     .headline {
-        font-size: 22px;
+        font-size: 20px;
     }
 
     .search-bar-container {
-        padding: 10px 12px 8px;
+        position: fixed;
+        top: auto;
+        left: 10px;
+        right: 10px;
+        bottom: calc(var(--bottom-player-height) + env(safe-area-inset-bottom) + 10px);
+        z-index: 130;
+        padding: 0;
+        background: none;
     }
 
     .search-bar {
-        height: 52px;
-        border-radius: 16px;
-        padding: 0 12px;
+        height: 56px;
+        border-radius: 18px;
+        padding: 0 10px 0 12px;
+        background: rgba(15, 18, 25, 0.92);
+    }
+
+    .search-bar .icon-btn {
+        width: 48px;
+        height: 48px;
+        border-radius: 14px;
+    }
+
+    .search-bar input {
+        font-size: 17px;
+    }
+
+    .search-meta {
+        margin-top: 8px;
+        padding: 0 4px;
+        font-size: 12px;
     }
 
     .track-list {
@@ -695,8 +720,9 @@ body {
     .bottom-player {
         left: 10px;
         right: 10px;
-        bottom: 10px;
+        bottom: calc(8px + env(safe-area-inset-bottom));
         border-radius: 18px;
+        height: var(--bottom-player-height);
     }
 
     .player-content {
@@ -709,14 +735,25 @@ body {
     }
 
     .controls_player .icon-btn {
-        width: 34px;
-        height: 34px;
+        width: 44px;
+        height: 44px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.08);
     }
 
     .fab-primary {
-        width: 48px;
-        height: 48px;
-        border-radius: 14px;
+        width: 58px;
+        height: 58px;
+        border-radius: 18px;
+    }
+
+    .content-container {
+        padding-bottom: calc(var(--bottom-player-height) + env(safe-area-inset-bottom) + 108px);
+    }
+
+    .track-actions .icon-btn {
+        width: 44px;
+        height: 44px;
     }
 }
 

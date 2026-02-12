@@ -154,6 +154,10 @@ class MusicApp {
     initTerminal() {
         this.terminalContainer = document.getElementById('terminal-container');
         this.terminalToggle = document.getElementById('terminal-toggle');
+        if (!this.terminalContainer || !this.terminalToggle || typeof VanillaTerminal === 'undefined') {
+            this.terminal = null;
+            return;
+        }
 
         this.terminalSelectionIndex = 0;
         this.isTerminalTUI = true;
@@ -188,6 +192,7 @@ class MusicApp {
     }
 
     handleTerminalKeyDown(e) {
+        if (!this.terminal) return;
         if (this.terminalContainer.classList.contains('hidden')) return;
 
         switch (e.key) {
@@ -267,6 +272,7 @@ class MusicApp {
     }
 
     renderCLITUI() {
+        if (!this.terminal || !this.terminalContainer) return;
         if (this.terminalContainer.classList.contains('hidden')) return;
 
         this.terminal.clear();
@@ -309,6 +315,7 @@ class MusicApp {
     }
 
     handleTerminalCommand(commandStr) {
+        if (!this.terminal) return false;
         const [cmd, ...args] = commandStr.split(' ');
         const argString = args.join(' ');
 
@@ -385,6 +392,7 @@ class MusicApp {
     }
 
     listTracksCLI() {
+        if (!this.terminal) return;
         if (this.tracks.length === 0) {
             this.terminal.print('Playlist is empty.');
             return;
