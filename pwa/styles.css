@@ -302,6 +302,11 @@ body {
     transform: scale(0.98);
 }
 
+.track-item.swiping {
+    border-color: rgba(239, 68, 68, 0.35);
+    box-shadow: 0 10px 24px -18px rgba(239, 68, 68, 0.85);
+}
+
 .track-item.playing {
     background: rgba(167, 139, 250, 0.1);
     border-color: rgba(167, 139, 250, 0.3);

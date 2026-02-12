@@ -611,9 +611,104 @@ class MusicApp {
                 </div>
             `;
 
-            div.addEventListener('click', () => this.playTrack(index));
+            const shouldSuppressClick = this.attachSwipeToDelete(div, index);
+            div.addEventListener('click', (e) => {
+                if (shouldSuppressClick()) {
+                    e.preventDefault();
+                    return;
+                }
+                this.playTrack(index);
+            });
             this.trackList.appendChild(div);
         }
+    }
+
+    attachSwipeToDelete(trackNode, index) {
+        let startX = 0;
+        let startY = 0;
+        let deltaX = 0;
+        let tracking = false;
+        let swiping = false;
+        let suppressClick = false;
+
+        const clampLeft = -132;
+        const swipeThreshold = -92;
+
+        const touchAt = (e) => e.touches?.[0] || e.changedTouches?.[0];
+
+        trackNode.addEventListener('touchstart', (e) => {
+            const t = touchAt(e);
+            if (!t) return;
+            tracking = true;
+            swiping = false;
+            deltaX = 0;
+            startX = t.clientX;
+            startY = t.clientY;
+            trackNode.style.transition = '';
+        }, { passive: true });
+
+        trackNode.addEventListener('touchmove', (e) => {
+            if (!tracking) return;
+            const t = touchAt(e);
+            if (!t) return;
+
+            const dx = t.clientX - startX;
+            const dy = t.clientY - startY;
+
+            if (!swiping) {
+                if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+                if (Math.abs(dx) > Math.abs(dy) && dx < 0) {
+                    swiping = true;
+                    trackNode.classList.add('swiping');
+                } else {
+                    tracking = false;
+                    return;
+                }
+            }
+
+            e.preventDefault();
+            deltaX = Math.max(clampLeft, Math.min(0, dx));
+            if (Math.abs(deltaX) > 10) suppressClick = true;
+            trackNode.style.transform = `translateX(${deltaX}px)`;
+        }, { passive: false });
+
+        trackNode.addEventListener('touchend', () => {
+            if (!tracking && !swiping) return;
+
+            tracking = false;
+            trackNode.style.transition = 'transform 180ms ease';
+
+            if (deltaX <= swipeThreshold) {
+                trackNode.style.transform = 'translateX(-140%)';
+                window.setTimeout(() => {
+                    this.deleteTrack(index);
+                    this.showStatus('Track removed');
+                }, 120);
+            } else {
+                trackNode.style.transform = 'translateX(0)';
+                window.setTimeout(() => {
+                    suppressClick = false;
+                }, 180);
+            }
+
+            window.setTimeout(() => {
+                trackNode.classList.remove('swiping');
+            }, 180);
+        }, { passive: true });
+
+        trackNode.addEventListener('touchcancel', () => {
+            tracking = false;
+            swiping = false;
+            deltaX = 0;
+            trackNode.style.transition = 'transform 180ms ease';
+            trackNode.style.transform = 'translateX(0)';
+            window.setTimeout(() => {
+                trackNode.classList.remove('swiping');
+                suppressClick = false;
+            }, 180);
+        }, { passive: true });
+
+        return () => suppressClick;
     }
 
     async downloadTrack(index) {
