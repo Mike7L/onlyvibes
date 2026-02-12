@@ -11,6 +11,7 @@ class MusicApp {
         this.db = null;
         // Initialize Logger
         this.logger = new Logger();
+        this.useLegacyJsApi = new URLSearchParams(window.location.search).get('legacyjs') === '1';
         window.app = this; // Make app globally accessible for debugging
         this.logger.info("Initializing MusicApp");
 
@@ -25,6 +26,9 @@ class MusicApp {
         this.initProviders();
 
         this.fetchConfig();
+        if (this.useLegacyJsApi) {
+            this.showStatus('Legacy YouTube JS API mode', 4500);
+        }
     }
 
     initProviders(config = {}) {
@@ -1031,15 +1035,20 @@ class MusicApp {
                 reject(new Error('YouTube API timeout'));
             }, 10000);
 
-            window.onYouTubeIframeAPIReady = () => {
+            const resolveReady = () => {
                 window.clearTimeout(failTimer);
                 resolve();
             };
+            window.onYouTubeIframeAPIReady = resolveReady;
+            // Legacy callback name used by older JS API bootstrap.
+            window.onYouTubePlayerAPIReady = resolveReady;
 
             if (!this.ytApiScriptLoading) {
                 this.ytApiScriptLoading = true;
                 const script = document.createElement('script');
-                script.src = 'https://www.youtube.com/iframe_api';
+                script.src = this.useLegacyJsApi
+                    ? 'https://www.youtube.com/player_api'
+                    : 'https://www.youtube.com/iframe_api';
                 script.onerror = () => {
                     window.clearTimeout(failTimer);
                     reject(new Error('YouTube API load failed'));
