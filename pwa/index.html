@@ -44,6 +44,33 @@
             </div>
         </div>
 
+        <section class="yt-lab glass">
+            <div class="yt-lab-title">YouTube Lab (PWA)</div>
+            <div class="yt-lab-form">
+                <input id="ytInput" type="text" placeholder="YouTube URL or video ID">
+                <button class="icon-btn" id="ytLoadEmbedBtn" title="Load via iframe">
+                    <span class="material-symbols-rounded">web</span>
+                </button>
+                <button class="icon-btn" id="ytLoadApiBtn" title="Load via IFrame API">
+                    <span class="material-symbols-rounded">code</span>
+                </button>
+            </div>
+            <div class="yt-lab-actions">
+                <button class="yt-control-btn" id="ytApiPlayBtn">API Play</button>
+                <button class="yt-control-btn" id="ytApiPauseBtn">API Pause</button>
+            </div>
+            <div class="yt-players">
+                <div class="yt-player-shell">
+                    <div class="yt-player-label">1) iframe embed</div>
+                    <div id="ytEmbedHost" class="yt-player-host"></div>
+                </div>
+                <div class="yt-player-shell">
+                    <div class="yt-player-label">2) IFrame API</div>
+                    <div id="ytApiPlayerHost" class="yt-player-host"></div>
+                </div>
+            </div>
+        </section>
+
         <!-- Status Message (Toast) -->
         <div id="statusMsg" class="snackbar"></div>
 

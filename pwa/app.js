@@ -135,6 +135,16 @@ class MusicApp {
         this.galleriesContainer = document.getElementById('galleriesContainer');
 
         this.searchBarContainer = document.getElementById('searchBarContainer');
+        this.ytInput = document.getElementById('ytInput');
+        this.ytLoadEmbedBtn = document.getElementById('ytLoadEmbedBtn');
+        this.ytLoadApiBtn = document.getElementById('ytLoadApiBtn');
+        this.ytApiPlayBtn = document.getElementById('ytApiPlayBtn');
+        this.ytApiPauseBtn = document.getElementById('ytApiPauseBtn');
+        this.ytEmbedHost = document.getElementById('ytEmbedHost');
+        this.ytApiPlayerHost = document.getElementById('ytApiPlayerHost');
+        this.ytApiPlayer = null;
+        this.ytApiReadyPromise = null;
+        this.ytApiScriptLoading = false;
         this.initTerminal();
     }
 
@@ -396,6 +406,24 @@ class MusicApp {
 
         if (this.progressBar && this.progressBar.parentElement) {
             this.progressBar.parentElement.addEventListener('click', (e) => this.seekToPosition(e));
+        }
+
+        if (this.ytLoadEmbedBtn) {
+            this.ytLoadEmbedBtn.addEventListener('click', () => this.loadYouTubeEmbed());
+        }
+        if (this.ytInput) {
+            this.ytInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.loadYouTubeEmbed();
+            });
+        }
+        if (this.ytLoadApiBtn) {
+            this.ytLoadApiBtn.addEventListener('click', () => this.loadYouTubeApiPlayer());
+        }
+        if (this.ytApiPlayBtn) {
+            this.ytApiPlayBtn.addEventListener('click', () => this.playYouTubeApiPlayer());
+        }
+        if (this.ytApiPauseBtn) {
+            this.ytApiPauseBtn.addEventListener('click', () => this.pauseYouTubeApiPlayer());
         }
     }
 
@@ -783,6 +811,132 @@ class MusicApp {
             this.logger.error("Similar Load Error", e);
             this.showStatus("Failed to find similar music");
         }
+    }
+
+    getYouTubeVideoId(rawInput) {
+        const input = (rawInput || '').trim();
+        if (!input) return null;
+
+        const directId = input.match(/^[a-zA-Z0-9_-]{11}$/);
+        if (directId) return directId[0];
+
+        try {
+            const url = new URL(input);
+            if (url.hostname.includes('youtu.be')) {
+                const id = url.pathname.replace('/', '').split('/')[0];
+                return id || null;
+            }
+            if (url.hostname.includes('youtube.com')) {
+                const byQuery = url.searchParams.get('v');
+                if (byQuery) return byQuery;
+                const byPath = url.pathname.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+                if (byPath) return byPath[1];
+                const shorts = url.pathname.match(/\/shorts\/([a-zA-Z0-9_-]{11})/);
+                if (shorts) return shorts[1];
+            }
+        } catch (_e) {
+            return null;
+        }
+
+        return null;
+    }
+
+    loadYouTubeEmbed() {
+        if (!this.ytEmbedHost) return;
+
+        const videoId = this.getYouTubeVideoId(this.ytInput?.value);
+        if (!videoId) {
+            this.showStatus('Invalid YouTube URL/ID');
+            return;
+        }
+
+        const iframe = document.createElement('iframe');
+        iframe.src = `https://www.youtube-nocookie.com/embed/${videoId}?rel=0&playsinline=1`;
+        iframe.title = 'YouTube video player';
+        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+        iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+        iframe.allowFullscreen = true;
+
+        this.ytEmbedHost.innerHTML = '';
+        this.ytEmbedHost.appendChild(iframe);
+        this.showStatus('iframe embed loaded');
+    }
+
+    ensureYouTubeApiReady() {
+        if (window.YT && window.YT.Player) {
+            return Promise.resolve();
+        }
+        if (this.ytApiReadyPromise) {
+            return this.ytApiReadyPromise;
+        }
+
+        this.ytApiReadyPromise = new Promise((resolve, reject) => {
+            const failTimer = window.setTimeout(() => {
+                reject(new Error('YouTube API timeout'));
+            }, 10000);
+
+            window.onYouTubeIframeAPIReady = () => {
+                window.clearTimeout(failTimer);
+                resolve();
+            };
+
+            if (!this.ytApiScriptLoading) {
+                this.ytApiScriptLoading = true;
+                const script = document.createElement('script');
+                script.src = 'https://www.youtube.com/iframe_api';
+                script.onerror = () => {
+                    window.clearTimeout(failTimer);
+                    reject(new Error('YouTube API load failed'));
+                };
+                document.head.appendChild(script);
+            }
+        });
+
+        return this.ytApiReadyPromise;
+    }
+
+    async loadYouTubeApiPlayer() {
+        if (!this.ytApiPlayerHost) return;
+
+        const videoId = this.getYouTubeVideoId(this.ytInput?.value);
+        if (!videoId) {
+            this.showStatus('Invalid YouTube URL/ID');
+            return;
+        }
+
+        try {
+            await this.ensureYouTubeApiReady();
+            this.ytApiPlayerHost.innerHTML = '';
+
+            this.ytApiPlayer = new window.YT.Player('ytApiPlayerHost', {
+                videoId,
+                playerVars: {
+                    playsinline: 1,
+                    rel: 0,
+                    modestbranding: 1
+                }
+            });
+            this.showStatus('IFrame API player loaded');
+        } catch (e) {
+            this.showStatus('Failed to load IFrame API');
+            this.logger.error('IFrame API error', e);
+        }
+    }
+
+    playYouTubeApiPlayer() {
+        if (!this.ytApiPlayer || !this.ytApiPlayer.playVideo) {
+            this.showStatus('Load API player first');
+            return;
+        }
+        this.ytApiPlayer.playVideo();
+    }
+
+    pauseYouTubeApiPlayer() {
+        if (!this.ytApiPlayer || !this.ytApiPlayer.pauseVideo) {
+            this.showStatus('Load API player first');
+            return;
+        }
+        this.ytApiPlayer.pauseVideo();
     }
 
     showStatus(msg, dur = 3000) {
