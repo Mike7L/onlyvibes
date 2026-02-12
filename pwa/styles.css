@@ -135,13 +135,12 @@ body {
 .search-bar-container {
     padding: 16px 16px 8px;
     height: auto;
-    /* max-height: 0; REMOVED */
-    /* overflow: hidden; REMOVED */
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background: linear-gradient(to bottom, rgba(3, 4, 10, 0.98), rgba(3, 4, 10, 0.84), rgba(3, 4, 10, 0.05));
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    /* opacity: 0; REMOVED */
 }
-
-
 
 .search-bar {
     background: rgba(255, 255, 255, 0.05);
@@ -166,6 +165,29 @@ body {
     color: var(--on-surface);
     font-size: 16px;
     outline: none;
+}
+
+.search-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+    padding: 0 2px;
+    color: var(--on-surface-variant);
+}
+
+.text-btn {
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--on-surface);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.hidden-lab {
+    display: none;
 }
 
 .yt-lab {
@@ -253,8 +275,7 @@ body {
     flex: 1;
     overflow-y: auto;
     padding-bottom: calc(var(--bottom-player-height) + 20px);
-    mask-image: linear-gradient(to bottom, transparent, black 20px, black calc(100% - 20px), transparent);
-    -webkit-mask-image: linear-gradient(to bottom, transparent, black 20px, black calc(100% - 20px), transparent);
+    padding-top: 4px;
 }
 
 .track-list {
@@ -268,7 +289,7 @@ body {
 .track-item {
     display: flex;
     align-items: center;
-    padding: 12px;
+    padding: 14px 12px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid transparent;
     border-radius: var(--border-radius-md);
@@ -331,9 +352,9 @@ body {
 .track-actions .icon-btn {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--glass-border);
-    width: 36px;
-    height: 36px;
-    opacity: 0.7;
+    width: 40px;
+    height: 40px;
+    opacity: 0.9;
 }
 
 .track-actions .icon-btn:hover {
@@ -626,6 +647,77 @@ body {
 .terminal-toggle-btn:hover {
     transform: scale(1.1);
     background: #444;
+}
+
+@media (max-width: 640px) {
+    :root {
+        --bottom-player-height: 90px;
+    }
+
+    .top-app-bar {
+        height: 62px;
+        padding: 0 16px;
+    }
+
+    .headline {
+        font-size: 22px;
+    }
+
+    .search-bar-container {
+        padding: 10px 12px 8px;
+    }
+
+    .search-bar {
+        height: 52px;
+        border-radius: 16px;
+        padding: 0 12px;
+    }
+
+    .track-list {
+        padding: 14px 12px;
+        gap: 10px;
+    }
+
+    .album-art-placeholder {
+        width: 44px;
+        height: 44px;
+        margin-right: 12px;
+    }
+
+    .track-title {
+        font-size: 14px;
+    }
+
+    .track-artist {
+        font-size: 12px;
+    }
+
+    .bottom-player {
+        left: 10px;
+        right: 10px;
+        bottom: 10px;
+        border-radius: 18px;
+    }
+
+    .player-content {
+        padding: 0 12px;
+        gap: 10px;
+    }
+
+    .controls_player {
+        gap: 8px;
+    }
+
+    .controls_player .icon-btn {
+        width: 34px;
+        height: 34px;
+    }
+
+    .fab-primary {
+        width: 48px;
+        height: 48px;
+        border-radius: 14px;
+    }
 }
 
 /* Vanilla Terminal Overrides */

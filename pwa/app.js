@@ -118,6 +118,8 @@ class MusicApp {
     initElements() {
         this.searchInput = document.getElementById('searchInput');
         this.searchBtn = document.getElementById('searchExecBtn');
+        this.playlistCount = document.getElementById('playlistCount');
+        this.clearPlaylistBtn = document.getElementById('clearPlaylistBtn');
         this.trackList = document.getElementById('trackList');
         this.audioPlayer = document.getElementById('audioPlayer');
 
@@ -409,6 +411,9 @@ class MusicApp {
         if (this.searchInput) {
             this.searchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') this.search(); });
         }
+        if (this.clearPlaylistBtn) {
+            this.clearPlaylistBtn.addEventListener('click', () => this.clearPlaylist());
+        }
         this.playPauseBtn.addEventListener('click', () => this.togglePlayPause());
         this.prevBtn.addEventListener('click', () => this.playPrevious());
         this.nextBtn.addEventListener('click', () => this.playNext());
@@ -490,16 +495,15 @@ class MusicApp {
             try {
                 this.tracks = JSON.parse(cached);
                 this.renderTracks();
-                if (this.tracks.length > 0) {
-                    this.currentTrackIndex = 0;
-                    this.updateNowPlaying();
-                }
+                this.currentTrackIndex = -1;
+                this.updateNowPlaying();
             } catch (e) { }
         }
     }
 
     saveTracks() {
         localStorage.setItem('onlymusic_tracks', JSON.stringify(this.tracks));
+        this.updatePlaylistMeta();
     }
 
     // New Modular Search Logic
@@ -507,55 +511,74 @@ class MusicApp {
         const query = this.searchInput.value.trim();
         if (!query) return;
 
+        this.setSearchBusy(true);
         this.showStatus('Searching...');
+        const hasPlaybackContext = this.currentTrackIndex >= 0 || Boolean(this.audioPlayer.src) || Boolean(this.ytApiPlayer);
 
-        for (const provider of this.providers) {
-            if (!provider.canSearch()) continue;
+        try {
+            for (const provider of this.providers) {
+                if (!provider.canSearch()) continue;
 
-            try {
-                const results = await provider.search(query);
+                try {
+                    const results = await provider.search(query);
 
-                if (results && results.length > 0) {
-                    let addedCount = 0;
-                    results.forEach(track => {
-                        if (!this.tracks.find(t => t.videoId === track.videoId)) {
-                            this.tracks.push(track);
-                            addedCount++;
+                    if (results && results.length > 0) {
+                        let addedCount = 0;
+                        let firstAddedIndex = -1;
+                        results.forEach(track => {
+                            if (!this.tracks.find(t => t.videoId === track.videoId)) {
+                                if (firstAddedIndex === -1) firstAddedIndex = this.tracks.length;
+                                this.tracks.push(track);
+                                addedCount++;
+                            }
+                        });
+
+                        if (addedCount > 0) {
+                            this.saveTracks();
+                            this.renderTracks();
+                            this.renderCLITUI();
+                            if (!hasPlaybackContext && firstAddedIndex >= 0) {
+                                await this.playTrack(firstAddedIndex);
+                                this.showStatus(`Added ${addedCount} tracks and started playback`);
+                            } else {
+                                this.showStatus(`Added ${addedCount} tracks from ${provider.name}`);
+                            }
+                        } else {
+                            this.showStatus(`Already in playlist (${provider.name})`);
                         }
-                    });
-
-                    if (addedCount > 0) {
-                        this.saveTracks();
-                        this.renderTracks();
-                        this.renderCLITUI();
-                        this.showStatus(`Added ${addedCount} tracks from ${provider.name}`);
-                    } else {
-                        this.showStatus(`Already in playlist (${provider.name})`);
+                        return; // Succesful search
                     }
-                    return; // Succesful search
-                }
-            } catch (error) {
-                this.logger.warn(`Search failed on ${provider.name}: ${error.message}`);
-                if (provider.rotate) {
-                    provider.rotate();
-                    // Optional: Try again with new instance?
-                    // For now, let's just move to next provider to avoid infinite loops
+                } catch (error) {
+                    this.logger.warn(`Search failed on ${provider.name}: ${error.message}`);
+                    if (provider.rotate) {
+                        provider.rotate();
+                        // Optional: Try again with new instance?
+                        // For now, let's just move to next provider to avoid infinite loops
+                    }
                 }
             }
+            this.showStatus('All APIs failed');
+        } finally {
+            this.setSearchBusy(false);
         }
-        this.showStatus('All APIs failed');
     }
 
-    async renderTracks() {
+    renderTracks() {
         this.trackList.innerHTML = '';
+        this.updatePlaylistMeta();
         if (this.tracks.length === 0) {
-            this.trackList.innerHTML = `<div class="empty-state"><p>Playlist is empty</p></div>`;
+            this.trackList.innerHTML = `
+                <div class="empty-state">
+                    <span class="material-symbols-rounded icon-large">music_note</span>
+                    <p>Search and build your playlist</p>
+                    <small>First found track starts automatically</small>
+                </div>
+            `;
             return;
         }
 
         for (let index = 0; index < this.tracks.length; index++) {
             const track = this.tracks[index];
-            const isCached = await this.getFromDBCache(track.videoId);
 
             const div = document.createElement('div');
             div.className = `track-item ${index === this.currentTrackIndex ? 'playing' : ''}`;
@@ -564,25 +587,16 @@ class MusicApp {
 
             div.innerHTML = `
                 <div class="album-art-placeholder" style="${thumbnailStyle}">
-                    ${!track.thumbnail ? `<span class="material-symbols-rounded">${isCached ? 'download_done' : 'music_note'}</span>` : (isCached ? '<span class="material-symbols-rounded" style="background:rgba(0,0,0,0.5); border-radius:12px; padding:4px;">download_done</span>' : '')}
+                    ${!track.thumbnail ? '<span class="material-symbols-rounded">music_note</span>' : ''}
                 </div>
                 <div class="track-info">
                     <div class="track-title">${this.escapeHtml(track.title)}</div>
-                    <div class="track-artist">${isCached ? '💾 ' : ''}${this.formatDuration(track.duration)} • ${track.uploader}</div>
+                    <div class="track-artist">${this.formatDuration(track.duration)} • ${track.uploader || 'YouTube'}</div>
                 </div>
                 <div class="track-actions">
                     <button class="icon-btn similar-btn" onclick="event.stopPropagation(); app.loadSimilar(${index});" title="Find similar music">
                         <span class="material-symbols-rounded">auto_awesome</span>
                     </button>
-                    ${!isCached ? `
-                        <button class="icon-btn download-btn" onclick="event.stopPropagation(); app.downloadTrack(${index});" title="Download for offline">
-                            <span class="material-symbols-rounded">download</span>
-                        </button>
-                    ` : `
-                        <button class="icon-btn delete-cache-btn" onclick="event.stopPropagation(); app.deleteFromDBCache('${track.videoId}');" title="Remove from cache">
-                            <span class="material-symbols-rounded" style="color: var(--accent-secondary)">delete</span>
-                        </button>
-                    `}
                     <button class="icon-btn remove-track-btn" onclick="event.stopPropagation(); app.deleteTrack(${index});" title="Remove from playlist">
                          <span class="material-symbols-rounded">close</span>
                     </button>
@@ -1063,6 +1077,34 @@ class MusicApp {
             return;
         }
         this.audioPlayer.play();
+    }
+
+    setSearchBusy(isBusy) {
+        if (!this.searchBtn) return;
+        this.searchBtn.disabled = isBusy;
+        this.searchBtn.style.opacity = isBusy ? '0.65' : '1';
+        const icon = this.searchBtn.querySelector('.material-symbols-rounded');
+        if (icon) icon.textContent = isBusy ? 'progress_activity' : 'arrow_forward';
+    }
+
+    updatePlaylistMeta() {
+        if (!this.playlistCount) return;
+        const count = this.tracks.length;
+        this.playlistCount.textContent = `${count} ${count === 1 ? 'track' : 'tracks'}`;
+    }
+
+    clearPlaylist() {
+        if (this.tracks.length === 0) return;
+        this.tracks = [];
+        this.currentTrackIndex = -1;
+        this.pausePlayback();
+        if (this.ytApiPlayer && this.ytApiPlayer.stopVideo) this.ytApiPlayer.stopVideo();
+        this.audioPlayer.src = '';
+        this.stopYouTubeProgressPolling();
+        this.saveTracks();
+        this.renderTracks();
+        this.updateNowPlaying();
+        this.showStatus('Playlist cleared');
     }
 
     showStatus(msg, dur = 3000) {
