@@ -970,6 +970,9 @@ class MusicApp {
 
     async loadYouTubeVideoById(videoId, autoplay = true) {
         await this.ensureYouTubeApiReady();
+        if (!this.ytApiPlayerHost) {
+            throw new Error('YouTube player host not found');
+        }
         this.audioPlayer.pause();
         this.audioPlayer.src = '';
 
