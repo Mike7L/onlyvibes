@@ -16,6 +16,13 @@ export const CorsProxy = {
     }
 };
 
+function getTimeoutFetchOptions(timeoutMs = 5000) {
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        return { signal: AbortSignal.timeout(timeoutMs) };
+    }
+    return {};
+}
+
 export class BaseProvider {
     constructor(config = {}) {
         this.config = config;
@@ -41,9 +48,12 @@ export class YouTubeiProvider extends BaseProvider {
         this.name = 'YouTube';
         this.baseUrl = 'https://www.youtube.com/youtubei/v1';
         this.capabilities.search = true;
+        this.disabledInBrowser = typeof window !== 'undefined' && !config.allow_direct_youtubei;
     }
 
     async search(query) {
+        if (this.disabledInBrowser) return [];
+
         const payload = {
             context: {
                 client: {
@@ -221,28 +231,42 @@ export class PipedProvider extends BaseProvider {
     }
 
     async search(query) {
-        const instance = this.instances[this.currentIndex].url;
-        const url = `${instance}/search?q=${encodeURIComponent(query)}&filter=music_songs`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        return (data.items || []).map(item => ({
-            title: item.title,
-            videoId: item.url.split('v=')[1],
-            duration: item.duration,
-            uploader: item.uploaderName,
-            source: 'PI',
-            provider: this.name
-        })).slice(0, 10);
+        for (let attempt = 0; attempt < this.instances.length; attempt++) {
+            const instance = this.instances[this.currentIndex].url;
+            const url = `${instance}/search?q=${encodeURIComponent(query)}&filter=music_songs`;
+            try {
+                const res = await fetch(url, getTimeoutFetchOptions(5000));
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                return (data.items || []).map(item => ({
+                    title: item.title,
+                    videoId: item.url.split('v=')[1],
+                    duration: item.duration,
+                    uploader: item.uploaderName,
+                    source: 'PI',
+                    provider: this.name
+                })).slice(0, 10);
+            } catch (_e) {
+                this.rotate();
+            }
+        }
+        return [];
     }
 
     async resolve(videoId) {
-        const instance = this.instances[this.currentIndex].url;
-        const res = await fetch(`${instance}/streams/${videoId}`, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) return null;
-        const data = await res.json();
-        const streams = (data.audioStreams || []).sort((a, b) => b.bitrate - a.bitrate);
-        return streams.length > 0 ? streams[0].url : null;
+        for (let attempt = 0; attempt < this.instances.length; attempt++) {
+            const instance = this.instances[this.currentIndex].url;
+            try {
+                const res = await fetch(`${instance}/streams/${videoId}`, getTimeoutFetchOptions(5000));
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const streams = (data.audioStreams || []).sort((a, b) => b.bitrate - a.bitrate);
+                if (streams.length > 0) return streams[0].url;
+            } catch (_e) {
+                this.rotate();
+            }
+        }
+        return null;
     }
 
     rotate() {
@@ -269,29 +293,42 @@ export class InvidiousProvider extends BaseProvider {
     }
 
     async search(query) {
-        const instance = this.instances[this.currentIndex].url;
-        const url = `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        return Array.isArray(data) ? data.slice(0, 10).map(item => ({
-            title: item.title,
-            videoId: item.videoId,
-            duration: item.lengthSeconds,
-            uploader: item.author,
-            source: 'IV',
-            provider: this.name
-        })) : [];
+        for (let attempt = 0; attempt < this.instances.length; attempt++) {
+            const instance = this.instances[this.currentIndex].url;
+            const url = `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`;
+            try {
+                const res = await fetch(url, getTimeoutFetchOptions(5000));
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                return Array.isArray(data) ? data.slice(0, 10).map(item => ({
+                    title: item.title,
+                    videoId: item.videoId,
+                    duration: item.lengthSeconds,
+                    uploader: item.author,
+                    source: 'IV',
+                    provider: this.name
+                })) : [];
+            } catch (_e) {
+                this.rotate();
+            }
+        }
+        return [];
     }
 
     async resolve(videoId) {
-        const instance = this.instances[this.currentIndex].url;
-        const res = await fetch(`${instance}/api/v1/videos/${videoId}`, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) return null;
-        const data = await res.json();
-        if (data.adaptiveFormats) {
-            const audio = data.adaptiveFormats.filter(f => f.type?.startsWith('audio')).sort((a, b) => b.bitrate - a.bitrate)[0];
-            return audio ? audio.url : null;
+        for (let attempt = 0; attempt < this.instances.length; attempt++) {
+            const instance = this.instances[this.currentIndex].url;
+            try {
+                const res = await fetch(`${instance}/api/v1/videos/${videoId}`, getTimeoutFetchOptions(5000));
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                if (data.adaptiveFormats) {
+                    const audio = data.adaptiveFormats.filter(f => f.type?.startsWith('audio')).sort((a, b) => b.bitrate - a.bitrate)[0];
+                    if (audio) return audio.url;
+                }
+            } catch (_e) {
+                this.rotate();
+            }
         }
         return null;
     }
@@ -362,7 +399,7 @@ export class AIGalleryProvider extends BaseProvider {
     constructor(config = {}) {
         super(config);
         this.name = 'AI Gallery';
-        this.capabilities.search = true;
+        this.capabilities.search = false;
         this.capabilities.resolve = false; // Delegates to other providers
 
         // Curated galleries (Playlists or search aliases)
@@ -383,10 +420,21 @@ export class AIGalleryProvider extends BaseProvider {
         const gallery = this.galleries.find(g => g.id === query);
         const searchQuery = gallery ? gallery.query : query;
 
-        // Use YouTubeiProvider logic to fetch results for the gallery
-        // In a real app, this might fetch from a dedicated AI feed API
-        const yt = new YouTubeiProvider(this.config);
-        const results = await yt.search(searchQuery);
+        const searchProviders = [
+            new InvidiousProvider(this.config),
+            new PipedProvider(this.config),
+            new YtPuttyProvider(this.config),
+            new YouTubeiProvider(this.config)
+        ];
+        let results = [];
+        for (const provider of searchProviders) {
+            try {
+                results = await provider.search(searchQuery);
+            } catch (_e) {
+                results = [];
+            }
+            if (results.length > 0) break;
+        }
 
         return results.map(r => ({
             ...r,
@@ -404,7 +452,7 @@ export class SimilarSongsProvider extends BaseProvider {
     constructor(config = {}) {
         super(config);
         this.name = 'Similar Music';
-        this.capabilities.search = true;
+        this.capabilities.search = false;
         this.capabilities.resolve = false; // Delegates to other providers
     }
 
@@ -419,9 +467,21 @@ export class SimilarSongsProvider extends BaseProvider {
         // Append "similar music" to the query to leverage YouTube's search relevance
         const finalQuery = `${searchQuery} similar music`;
 
-        // Use YouTubeiProvider logic to fetch results
-        const yt = new YouTubeiProvider(this.config);
-        const results = await yt.search(finalQuery);
+        const searchProviders = [
+            new InvidiousProvider(this.config),
+            new PipedProvider(this.config),
+            new YtPuttyProvider(this.config),
+            new YouTubeiProvider(this.config)
+        ];
+        let results = [];
+        for (const provider of searchProviders) {
+            try {
+                results = await provider.search(finalQuery);
+            } catch (_e) {
+                results = [];
+            }
+            if (results.length > 0) break;
+        }
 
         return results.map(r => ({
             ...r,

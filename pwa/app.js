@@ -42,19 +42,28 @@ class MusicApp {
     }
 
     async fetchConfig() {
-        try {
-            // Attempt to load external config from relative path
-            const res = await fetch('./config.json');
-            if (res.ok) {
+        const candidatePaths = [
+            './config.json',
+            '../config.json',
+            `${window.location.pathname.replace(/\/$/, '')}/config.json`,
+            '/config.json'
+        ];
+
+        for (const path of candidatePaths) {
+            try {
+                const res = await fetch(path, { cache: 'no-store' });
+                if (!res.ok) continue;
+
                 const config = await res.json();
                 this.initProviders(config);
-                this.logger.info("Loaded external API configuration");
-            } else {
-                this.logger.warn("Config not found, using defaults");
+                this.logger.info(`Loaded external API configuration from ${path}`);
+                return;
+            } catch (_e) {
+                // Try next candidate path.
             }
-        } catch (e) {
-            this.logger.warn("Failed to load config", e);
         }
+
+        this.logger.warn("Config not found, using defaults");
     }
 
     async initDB() {

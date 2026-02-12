@@ -1,4 +1,5 @@
 const CACHE_NAME = 'onlymusic-v3';
+const OFFLINE_RESPONSE = new Response('Offline', { status: 503, statusText: 'Offline' });
 
 const ASSETS_TO_CACHE_IMMEDIATELY = [
   './',
@@ -37,6 +38,10 @@ self.addEventListener('activate', event => {
 // Fetch: Apply different strategies based on request type
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
+  if (event.request.method !== 'GET') return;
+
+  // Don't proxy cross-origin requests through SW cache strategies.
+  if (url.origin !== self.location.origin) return;
 
   // 1. API Calls: Network Only (Audio streaming/Search)
   if (url.pathname.startsWith('/api/') || url.href.includes('pipedapi') || url.href.includes('invidious')) {
@@ -56,6 +61,7 @@ self.addEventListener('fetch', event => {
           return response;
         })
         .catch(() => caches.match(event.request))
+        .then(response => response || OFFLINE_RESPONSE)
     );
     return;
   }
@@ -73,10 +79,10 @@ self.addEventListener('fetch', event => {
               cache.put(event.request, networkResponse.clone());
             }
             return networkResponse;
-          });
+          }).catch(() => null);
           return cachedResponse || fetchPromise;
         });
-      })
+      }).then(response => response || OFFLINE_RESPONSE)
     );
     return;
   }
@@ -90,15 +96,16 @@ self.addEventListener('fetch', event => {
             cache.put(event.request, networkResponse.clone());
             return networkResponse;
           });
-        });
-      })
+        }).catch(() => null);
+      }).then(response => response || OFFLINE_RESPONSE)
     );
     return;
   }
 
   // 5. Default: Network First
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request))
+    fetch(event.request)
+      .catch(() => caches.match(event.request))
+      .then(response => response || OFFLINE_RESPONSE)
   );
 });
-
