@@ -1,4 +1,5 @@
 import { InvidiousProvider, PipedProvider, YouTubeiProvider, YtPuttyProvider, AIGalleryProvider, SimilarSongsProvider, CorsProxy } from './lib/yt-putty/index.js';
+import { Logger } from './lib/logger.js';
 
 class MusicApp {
     constructor() {
@@ -8,7 +9,10 @@ class MusicApp {
 
         // IndexedDB for Audio Caching
         this.db = null;
-        this.initDB();
+        // Initialize Logger
+        this.logger = new Logger();
+        window.app = this; // Make app globally accessible for debugging
+        this.logger.info("Initializing MusicApp");
 
         this.initElements();
         this.initAudio();
@@ -34,7 +38,7 @@ class MusicApp {
             new SimilarSongsProvider(config)
         ];
         this.renderGalleries();
-        console.log(`[i] Initialized ${this.providers.length} providers`);
+        this.logger.info(`Initialized ${this.providers.length} providers`);
     }
 
     async fetchConfig() {
@@ -44,12 +48,12 @@ class MusicApp {
             if (res.ok) {
                 const config = await res.json();
                 this.initProviders(config);
-                console.log("[i] Loaded external API configuration");
+                this.logger.info("Loaded external API configuration");
             } else {
-                console.warn("[!] Config not found, using defaults");
+                this.logger.warn("Config not found, using defaults");
             }
         } catch (e) {
-            console.warn("[!] Failed to load config:", e);
+            this.logger.warn("Failed to load config", e);
         }
     }
 
@@ -485,7 +489,7 @@ class MusicApp {
                     return; // Succesful search
                 }
             } catch (error) {
-                console.warn(`Search failed on ${provider.name}:`, error.message);
+                this.logger.warn(`Search failed on ${provider.name}: ${error.message}`);
                 if (provider.rotate) {
                     provider.rotate();
                     // Optional: Try again with new instance?
@@ -606,11 +610,11 @@ class MusicApp {
             try {
                 const streamUrl = await provider.resolve(videoId);
                 if (streamUrl) {
-                    console.log(`[i] Resolved stream from ${provider.name}`);
+                    this.logger.info(`Resolved stream from ${provider.name}`);
                     return streamUrl;
                 }
             } catch (e) {
-                console.warn(`Resolve failed on ${provider.name}:`, e.message);
+                this.logger.warn(`Resolve failed on ${provider.name}: ${e.message}`);
                 if (provider.rotate) {
                     provider.rotate();
                 }
@@ -635,10 +639,10 @@ class MusicApp {
             const blob = await response.blob();
             await this.saveToDBCache(videoId, blob);
             this.renderTracks(); // Update UI
-            console.log("Cached track:", videoId);
+            this.logger.info("Cached track:", videoId);
             if (isManual) this.showStatus('Saved to offline 💾');
         } catch (e) {
-            console.warn("Cache failed:", e.message);
+            this.logger.warn("Cache failed", e);
             if (isManual) this.showStatus('Download failed (CORS?)');
         }
     }
@@ -739,64 +743,63 @@ class MusicApp {
             this.saveTracks();
             this.showStatus(`Loaded ${results.length} tracks`);
         } catch (e) {
-            console.error("Gallery Load Error:", e);
+            this.logger.error("Gallery Load Error", e);
             this.showStatus("Failed to load gallery");
         }
     }
-}
 
     async loadSimilar(index) {
-    if (index < 0 || index >= this.tracks.length) return;
-    const track = this.tracks[index];
-    this.showStatus(`Finding songs similar to ${track.title}...`);
+        if (index < 0 || index >= this.tracks.length) return;
+        const track = this.tracks[index];
+        this.showStatus(`Finding songs similar to ${track.title}...`);
 
-    const similarProvider = this.providers.find(p => p instanceof SimilarSongsProvider);
-    if (!similarProvider) return;
+        const similarProvider = this.providers.find(p => p instanceof SimilarSongsProvider);
+        if (!similarProvider) return;
 
-    try {
-        // We use the artist + title for better similarity relevance
-        const query = `${track.uploader} ${track.title}`;
-        const results = await similarProvider.search(query);
+        try {
+            // We use the artist + title for better similarity relevance
+            const query = `${track.uploader} ${track.title}`;
+            const results = await similarProvider.search(query);
 
-        if (results && results.length > 0) {
-            this.tracks = results;
-            this.currentTrackIndex = -1;
-            this.renderTracks();
-            this.saveTracks();
-            this.showStatus(`Found ${results.length} similar tracks`);
-        } else {
-            this.showStatus("No similar tracks found");
+            if (results && results.length > 0) {
+                this.tracks = results;
+                this.currentTrackIndex = -1;
+                this.renderTracks();
+                this.saveTracks();
+                this.showStatus(`Found ${results.length} similar tracks`);
+            } else {
+                this.showStatus("No similar tracks found");
+            }
+        } catch (e) {
+            this.logger.error("Similar Load Error", e);
+            this.showStatus("Failed to find similar music");
         }
-    } catch (e) {
-        console.error("Similar Load Error:", e);
-        this.showStatus("Failed to find similar music");
     }
-}
 
-showStatus(msg, dur = 3000) {
-    this.statusMsg.textContent = msg;
-    this.statusMsg.classList.add('visible');
-    setTimeout(() => this.statusMsg.classList.remove('visible'), dur);
-}
+    showStatus(msg, dur = 3000) {
+        this.statusMsg.textContent = msg;
+        this.statusMsg.classList.add('visible');
+        setTimeout(() => this.statusMsg.classList.remove('visible'), dur);
+    }
 
-escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
 
-formatDuration(seconds) {
-    if (!seconds) return '0:00';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-}
+    formatDuration(seconds) {
+        if (!seconds) return '0:00';
+        const m = Math.floor(seconds / 60);
+        const s = Math.floor(seconds % 60);
+        return `${m}:${s.toString().padStart(2, '0')}`;
+    }
 
-formatTime(s) { return this.formatDuration(s); }
-handleAudioError(e) {
-    this.showStatus("Error playing stream");
-    console.error(e);
-}
+    formatTime(s) { return this.formatDuration(s); }
+    handleAudioError(e) {
+        this.showStatus("Error playing stream");
+        this.logger.error("Audio Player Error", e);
+    }
 }
 
 // Make app instance global

@@ -4,6 +4,26 @@
 
 import { YtPuttyApi } from '../lib/yt-putty/index.js';
 import assert from 'node:assert';
+import dns from 'node:dns/promises';
+
+async function hasDns(hostname) {
+    try {
+        await dns.lookup(hostname);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function hasNetworkForApi() {
+    const checks = await Promise.all([
+        hasDns('www.youtube.com'),
+        hasDns('api.audiomack.com'),
+        hasDns('api-v2.soundcloud.com'),
+        hasDns('piped.video')
+    ]);
+    return checks.some(Boolean);
+}
 
 async function testAggregation() {
     console.log("Testing YtPuttyApi Aggregation...");
@@ -34,6 +54,11 @@ async function testDeduplication() {
 
 async function runAll() {
     try {
+        if (!(await hasNetworkForApi())) {
+            console.log("⚠️ API integration tests skipped: no DNS/network access in current environment.");
+            return;
+        }
+
         await testAggregation();
         await testDeduplication();
         console.log("\n--- All API Integration Tests Passed ---");

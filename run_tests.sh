@@ -4,6 +4,20 @@
 echo "=== Starting OnlyMusic Test Suite ==="
 echo
 
+if [[ "$1" == "--pwa" ]]; then
+    echo "--- Running PWA Profile Tests ---"
+    export PYTHONPATH=$PYTHONPATH:.
+    export ONLYMUSIC_PWA_MODE=1
+    python3 tests/test_pwa_profile.py
+    PWA_STATUS=$?
+    if [ $PWA_STATUS -ne 0 ]; then
+        echo "❌ PWA Profile Tests FAILED"
+        exit 1
+    fi
+    echo "✅ PWA Profile Tests PASSED"
+    exit 0
+fi
+
 if [[ "$1" == "--integration" ]]; then
     echo "--- Running Integration Tests ---"
     export PYTHONPATH=$PYTHONPATH:.

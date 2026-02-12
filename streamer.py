@@ -22,6 +22,8 @@ from typing import List, Dict, Optional, Any
 import random
 import urllib.request
 import urllib.parse
+import logging
+import logging.handlers
 
 
 class MusicStreamer:
@@ -47,7 +49,9 @@ class MusicStreamer:
         
         # Загрузка настроек из внешнего файла
         self.config = self._load_config()
+        self.pwa_mode = self.config.get("pwa_mode", False) or os.getenv("ONLYMUSIC_PWA_MODE") == "1"
         
+        # Директории
         # Настройка кеша
         if cache_dir is None:
             cache_dir = self.config.get("cache_dir", "/Users/micha/Dropbox/Projects/onlymusic/music_cache")
@@ -76,6 +80,32 @@ class MusicStreamer:
             {'type': 'invidious', 'url': 'https://invidious.privacydev.net'},
         ])
         self.current_pwa_index = 0
+        
+        # Настройка логирования
+        self.logger = self._setup_logging()
+        self.logger.info("Initializing MusicStreamer")
+
+    def _setup_logging(self) -> logging.Logger:
+        """Настройка ротируемого лог-файла"""
+        logger = logging.getLogger("OnlyMusic")
+        logger.setLevel(logging.DEBUG)
+        
+        # Избегаем дублирования хендлеров при переинициализации
+        if not logger.handlers:
+            log_path = Path("/tmp/onlymusic.log")
+            # Ротация: 5МБ на файл, храним 5 последних
+            try:
+                handler = logging.handlers.RotatingFileHandler(
+                    log_path, maxBytes=5*1024*1024, backupCount=5, encoding='utf-8'
+                )
+                formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                handler.setFormatter(formatter)
+                logger.addHandler(handler)
+            except Exception as e:
+                # Fallback to console if /tmp is not writable
+                pass
+            
+        return logger
 
     def _load_config(self) -> Dict:
         """Загрузка конфигурации из config.json"""
@@ -106,9 +136,9 @@ class MusicStreamer:
                 try:
                     import shutil
                     shutil.copy2(self.cache_meta_file, backup_path)
-                    print(f"\n⚠️ Метаданные повреждены. Резервная копия сохранена в: {backup_path.name}")
-                except:
-                    pass
+                    self.logger.error(f"Metadata corrupted. Backup saved to: {backup_path.name}. Error: {e}")
+                except Exception as ex:
+                    self.logger.error(f"Failed to backup corrupted metadata: {ex}")
                 return {'files': {}, 'last_session': None}
         return {'files': {}, 'last_session': None}
     
@@ -198,7 +228,7 @@ class MusicStreamer:
         if not self.mpv_process:
             return
             
-        print("🔈 Затухание...")
+        self.logger.info("Stopping playback with fade out")
         for vol in range(100, -1, -20):
             self._send_mpv_command(["set_property", "volume", vol])
             time.sleep(0.1)
@@ -256,7 +286,7 @@ class MusicStreamer:
                 if show_progress: print()
                 return True
         except Exception as e:
-            if show_progress: print(f"❌ Ошибка загрузки: {e}")
+            self.logger.error(f"Direct download error for {url}: {e}")
             return False
 
     def _download_to_cache(self, track: Dict, show_progress: bool = True) -> bool:
@@ -269,7 +299,7 @@ class MusicStreamer:
         
         if show_progress:
             title = track['title'][:50] + "..." if len(track['title']) > 50 else track['title']
-            print(f"📥 Кеширование: {title}")
+            self.logger.info(f"Caching track: {title}")
 
         # 1. Пробуем через PWA API (быстрее)
         video_id = track.get('video_id') or url.split('v=')[-1]
@@ -283,7 +313,11 @@ class MusicStreamer:
                 return True
 
         # 2. Fallback на yt-dlp
-        if show_progress: print("🔄 Переключение на yt-dlp...")
+        if self.pwa_mode:
+            self.logger.warning(f"PWA Mode: Cannot fallback to yt-dlp for caching {track['title']}")
+            return False
+
+        self.logger.info(f"Switching to yt-dlp for {track['title']}")
         audio_quality = self.config.get("audio_quality", "128k")
         cmd = [
             'yt-dlp', '--extract-audio', '--audio-format', 'm4a',
@@ -299,8 +333,7 @@ class MusicStreamer:
             threading.Thread(target=self.download_subtitles, args=(url,), daemon=True).start()
             return True
         except subprocess.CalledProcessError as e:
-            if show_progress:
-                print(f"❌ Ошибка кеширования: {track['title'][:50]}")
+            self.logger.error(f"yt-dlp caching failed for {track['title']}: {e}")
             return False
 
     def download_subtitles(self, url: str) -> Optional[str]:
@@ -391,7 +424,7 @@ class MusicStreamer:
             'subtitle_path': self.cache_metadata['files'].get(url, {}).get('subtitle_path')
         }
         self._save_cache_metadata()
-        print(f"✅ Кешировано: {track['title'][:50]} {suffix}")
+        self.logger.info(f"Successfully cached: {track['title']} via {download_method}")
 
     def increment_play_count(self, url: str) -> None:
         """Увеличить счетчик проигрываний"""
@@ -463,7 +496,7 @@ class MusicStreamer:
             if total_size <= max_size_bytes:
                 return
                 
-            print(f"\n🧹 Очистка кеша: {total_size / (1024*1024):.1f}MB > {max_size_mb}MB")
+            self.logger.info(f"Enforcing cache limit: {total_size / (1024*1024):.1f}MB > {max_size_mb}MB")
             
             # 2. Собираем информацию о файлах для сортировки
             candidates = []
@@ -546,7 +579,7 @@ class MusicStreamer:
             
             if deleted_count > 0:
                 self._save_cache_metadata()
-                print(f"🧹 Удалено {deleted_count} старых треков (-{freed_space / (1024*1024):.1f} MB)")
+                self.logger.info(f"Cache cleanup: deleted {deleted_count} tracks, freed {freed_space / (1024*1024):.1f}MB")
                 
         except Exception as e:
             print(f"⚠️ Ошибка при очистке кеша: {e}")
@@ -636,7 +669,7 @@ class MusicStreamer:
     
     def search(self, query: str, max_results: int = 10) -> List[Dict]:
         """Поиск музыки (сначала через yt-putty, затем Python PWA API, затем yt-dlp)"""
-        print(f"🔍 Поиск: {query}...", end=" ", flush=True)
+        self.logger.info(f"Searching for: {query} (PWA Mode: {self.pwa_mode})")
         
         # 1. Пробуем yt-putty (Node.js) для агрегированного поиска (самый полный)
         try:
@@ -683,6 +716,7 @@ class MusicStreamer:
                                 validated_videos.append(v)
 
                             print(f"✅ Найдено (yt-putty): {len(validated_videos)}")
+                            self.logger.info(f"yt-putty found {len(validated_videos)} results for: {query}")
                             return validated_videos[:max_results]
                     except json.JSONDecodeError:
                         pass
@@ -693,15 +727,19 @@ class MusicStreamer:
         videos = self._search_pwa(query, max_results)
         if videos:
             for v in videos: v['search_method'] = 'PWA-PY'
-            print(f"✅ Найдено (PWA-PY): {len(videos)}")
+            self.logger.info(f"PWA-PY found {len(videos)} results for: {query}")
             return videos
 
         # 3. Добавляем прямой YouTubei поиск на Python (быстро и без ключей)
         videos = self._search_youtubei_python(query, max_results)
         if videos:
             for v in videos: v['search_method'] = 'YTI-PY'
-            print(f"✅ Найдено (YTI-PY): {len(videos)}")
+            self.logger.info(f"YTI-PY found {len(videos)} results for: {query}")
             return videos
+            
+        if self.pwa_mode:
+            self.logger.info("PWA Mode: Skipping yt-dlp search fallback")
+            return []
             
         # 4. Fallback на yt-dlp (самый медленный)
         cmd = [
@@ -738,7 +776,11 @@ class MusicStreamer:
                 return filtered[:max_results]
                 
             return videos[:max_results]
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            if isinstance(e, FileNotFoundError):
+                self.logger.warning("yt-dlp binary not found during fallback search")
+            else:
+                self.logger.warning("yt-dlp fallback search failed")
             print("❌ Error")
             return []
 
@@ -1218,4 +1260,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

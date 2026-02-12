@@ -6,9 +6,32 @@
 
 import { YtPuttyApi } from '../lib/yt-putty/index.js';
 import { execSync } from 'child_process';
+import dns from 'node:dns/promises';
+
+async function hasDns(hostname) {
+    try {
+        await dns.lookup(hostname);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function hasNetworkForVerification() {
+    const checks = await Promise.all([
+        hasDns('www.youtube.com'),
+        hasDns('piped.video'),
+        hasDns('api.invidious.io')
+    ]);
+    return checks.some(Boolean);
+}
 
 async function verify() {
     console.log("--- Verifying PWA Independence from ytdl ---");
+    if (!(await hasNetworkForVerification())) {
+        console.log("⚠️ Verification skipped: no DNS/network access in current environment.");
+        return;
+    }
 
     // 1. Check if yt-dlp is even "visible" to the test (optional info)
     try {
@@ -38,10 +61,15 @@ async function verify() {
             console.log("✅ No local ytdl/yt-dlp dependency detected in this flow.");
         } else {
             console.error("[-] Failed: No stream URL resolved.");
+            process.exitCode = 1;
         }
     } else {
         console.error("[-] Failed: No results found.");
+        process.exitCode = 1;
     }
 }
 
-verify().catch(console.error);
+verify().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+});

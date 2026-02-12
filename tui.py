@@ -47,6 +47,9 @@ class TUI:
         # Capture streamer output
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.streamer = MusicStreamer()
+        
+        self.logger = self.streamer.logger
+        self.logger.info("TUI Initialized")
             
         self.tracks = []  # Chronological list
         self.selection_index = -1 
@@ -579,9 +582,10 @@ class TUI:
             # Process Single Key Commands
             if key == 10: # Enter
                 if self.input_buffer.strip():
+                    self.logger.info(f"User search trigger: {self.input_buffer.strip()}")
                     self.perform_search()
                 else:
-                    # Toggle play/pause when search is empty
+                    self.logger.info("User play/pause toggle")
                     self.toggle_play()
             
             elif key in (curses.KEY_BACKSPACE, 127, 8):
@@ -602,6 +606,7 @@ class TUI:
                  self.streamer._send_mpv_command(["seek", "5", "relative"])
             
             elif key == ord('\t'): 
+                 self.logger.info(f"User play track: {self.selection_index}")
                  self.play_current()
             
             elif key == ord('#'):
@@ -617,11 +622,13 @@ class TUI:
             elif key in (ord('+'), ord('*'), ord('l')):
                 if 0 <= self.selection_index < len(self.tracks):
                     track = self.tracks[self.selection_index]
+                    self.logger.info(f"User like track: {track['title']}")
                     self.streamer.toggle_like(track['url'])
 
             elif key in (ord('/'), ord('-'), ord('d')):
                 if 0 <= self.selection_index < len(self.tracks):
                     track = self.tracks[self.selection_index]
+                    self.logger.info(f"User dislike track: {track['title']}")
                     self.streamer.toggle_dislike(track['url'])
 
             elif key == 27: # Esc

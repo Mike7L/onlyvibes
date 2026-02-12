@@ -5,6 +5,25 @@
 
 import { YouTubeiProvider, AudiomackProvider, SoundCloudProvider, PipedProvider, InvidiousProvider } from '../lib/yt-putty/index.js';
 import assert from 'node:assert';
+import dns from 'node:dns/promises';
+
+async function hasDns(hostname) {
+    try {
+        await dns.lookup(hostname);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function hasNetworkForProviders() {
+    const checks = await Promise.all([
+        hasDns('www.youtube.com'),
+        hasDns('api.audiomack.com'),
+        hasDns('soundcloud.com')
+    ]);
+    return checks.some(Boolean);
+}
 
 async function testYouTubei() {
     console.log("Testing YouTubeiProvider...");
@@ -45,6 +64,11 @@ async function testSoundCloud() {
 
 async function runAll() {
     try {
+        if (!(await hasNetworkForProviders())) {
+            console.log("⚠️ Provider tests skipped: no DNS/network access in current environment.");
+            return;
+        }
+
         await testYouTubei();
         await testAudiomack();
         await testSoundCloud();

@@ -4,6 +4,7 @@ import os
 import json
 import shutil
 from pathlib import Path
+from unittest.mock import patch
 
 # Add root dir to path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -79,15 +80,23 @@ class TestStreamerFeatures(unittest.TestCase):
         self.assertFalse(self.streamer.get_track_stats(self.test_url)['is_disliked'])
 
     def test_search_structure(self):
-        # Test that search returns the expected dictionary structure
-        # (Using a broad term to ensure results)
-        results = self.streamer.search("piano", max_results=2)
-        if results:
-            track = results[0]
-            self.assertIn('title', track)
-            self.assertIn('url', track)
-            self.assertIn('search_method', track)
-            print(f"   [OK] Search returned source: {track.get('search_method')}")
+        # Keep this unit test deterministic and independent of network/providers.
+        mock_track = {
+            'title': 'Mock Piano Track',
+            'videoId': 'mock123',
+            'url': 'https://www.youtube.com/watch?v=mock123',
+            'duration': 120,
+            'uploader': 'Mock',
+        }
+        with patch.object(self.streamer, '_search_pwa', return_value=[mock_track]):
+            results = self.streamer.search("piano", max_results=2)
+
+        self.assertTrue(results)
+        track = results[0]
+        self.assertIn('title', track)
+        self.assertIn('url', track)
+        self.assertIn('search_method', track)
+        print(f"   [OK] Search returned source: {track.get('search_method')}")
 
 if __name__ == '__main__':
     unittest.main()
