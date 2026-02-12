@@ -143,6 +143,7 @@ class MusicApp {
         this.ytEmbedHost = document.getElementById('ytEmbedHost');
         this.ytApiPlayerHost = document.getElementById('ytApiPlayerHost');
         this.ytApiPlayer = null;
+        this.ytProgressTimer = null;
         this.ytApiReadyPromise = null;
         this.ytApiScriptLoading = false;
         this.initTerminal();
@@ -248,13 +249,19 @@ class MusicApp {
     }
 
     seekForward() {
-        if (this.audioPlayer.duration) {
-            this.audioPlayer.currentTime = Math.min(this.audioPlayer.duration, this.audioPlayer.currentTime + 5);
-        }
+        const duration = this.getPlaybackDuration();
+        const current = this.getPlaybackCurrentTime();
+        if (!duration) return;
+        const nextTime = Math.min(duration, current + 5);
+        if (this.ytApiPlayer && this.ytApiPlayer.seekTo) this.ytApiPlayer.seekTo(nextTime, true);
+        else this.audioPlayer.currentTime = nextTime;
     }
 
     seekBackward() {
-        this.audioPlayer.currentTime = Math.max(0, this.audioPlayer.currentTime - 5);
+        const current = this.getPlaybackCurrentTime();
+        const nextTime = Math.max(0, current - 5);
+        if (this.ytApiPlayer && this.ytApiPlayer.seekTo) this.ytApiPlayer.seekTo(nextTime, true);
+        else this.audioPlayer.currentTime = nextTime;
     }
 
     renderCLITUI() {
@@ -281,8 +288,10 @@ class MusicApp {
         }
 
         // Progress bar for current track
-        if (this.currentTrackIndex >= 0 && this.audioPlayer.duration) {
-            const pct = this.audioPlayer.currentTime / this.audioPlayer.duration;
+        const currentTime = this.getPlaybackCurrentTime();
+        const duration = this.getPlaybackDuration();
+        if (this.currentTrackIndex >= 0 && duration) {
+            const pct = currentTime / duration;
             const barWidth = 30;
             const pos = Math.floor(pct * barWidth);
             let bar = '';
@@ -291,7 +300,7 @@ class MusicApp {
                 else if (i < pos) bar += '━';
                 else bar += '─';
             }
-            this.terminal.print(`<br><span style="color:#94a3b8;">[${bar}]</span> ${this.formatTime(this.audioPlayer.currentTime)} / ${this.formatTime(this.audioPlayer.duration)}`);
+            this.terminal.print(`<br><span style="color:#94a3b8;">[${bar}]</span> ${this.formatTime(currentTime)} / ${this.formatTime(duration)}`);
         }
 
         this.terminal.print('<br><span style="color:#94a3b8; font-size:11px;">↑/↓ Navigate | Enter:Search/Pause | Tab:Play | ←/→ Seek | Del:Remove</span><br>');
@@ -316,7 +325,7 @@ class MusicApp {
                 break;
             case 'play':
                 if (!argString) {
-                    if (this.audioPlayer.paused) this.togglePlayPause();
+                    if (this.isPlaybackPaused()) this.togglePlayPause();
                     this.terminal.print('Resuming playback...');
                 } else {
                     this.terminal.print(`Searching and playing: ${argString}...`);
@@ -340,11 +349,11 @@ class MusicApp {
                 break;
             case 'stop':
             case 'pause':
-                this.audioPlayer.pause();
+                this.pausePlayback();
                 this.terminal.print('Music paused.');
                 break;
             case 'resume':
-                this.audioPlayer.play();
+                this.resumePlayback();
                 this.terminal.print('Music resumed.');
                 break;
             case 'next':
@@ -587,18 +596,7 @@ class MusicApp {
 
     async downloadTrack(index) {
         if (index < 0 || index >= this.tracks.length) return;
-        const track = this.tracks[index];
-        this.showStatus(`Downloading ${track.title}...`);
-
-        try {
-            const streamUrl = await this.resolveStream(track.videoId);
-            if (!streamUrl) throw new Error('Could not resolve stream');
-
-            await this.cacheInBackground(track.videoId, streamUrl, true);
-        } catch (error) {
-            this.showStatus('Download failed');
-            console.error(error);
-        }
+        this.showStatus('Offline download disabled in YouTube API mode');
     }
 
     async playTrack(index) {
@@ -609,6 +607,18 @@ class MusicApp {
         this.updateNowPlaying();
         this.renderTracks();
         this.renderCLITUI();
+
+        if (track.videoId) {
+            try {
+                this.showStatus('Loading YouTube player...');
+                await this.loadYouTubeVideoById(track.videoId, true);
+                this.showStatus('Playing from YouTube');
+            } catch (error) {
+                this.showStatus('YouTube playback error');
+                this.logger.error('YouTube playback failed', error);
+            }
+            return;
+        }
 
         try {
             // 1. Try DB Cache
@@ -685,6 +695,16 @@ class MusicApp {
     }
 
     togglePlayPause() {
+        if (this.ytApiPlayer && this.ytApiPlayer.getPlayerState) {
+            const state = this.ytApiPlayer.getPlayerState();
+            if (state === window.YT?.PlayerState?.PLAYING) {
+                this.ytApiPlayer.pauseVideo();
+            } else {
+                this.ytApiPlayer.playVideo();
+            }
+            return;
+        }
+
         if (!this.audioPlayer.src) {
             if (this.tracks.length > 0) this.playTrack(0);
             return;
@@ -702,6 +722,10 @@ class MusicApp {
         if (index === this.currentTrackIndex) {
             this.audioPlayer.pause();
             this.audioPlayer.src = '';
+            if (this.ytApiPlayer && this.ytApiPlayer.stopVideo) {
+                this.ytApiPlayer.stopVideo();
+            }
+            this.stopYouTubeProgressPolling();
             this.currentTrackIndex = -1;
             this.updateNowPlaying();
         } else if (index < this.currentTrackIndex) {
@@ -711,11 +735,14 @@ class MusicApp {
     }
 
     updateProgress() {
-        if (!this.audioPlayer.duration) return;
-        const percent = (this.audioPlayer.currentTime / this.audioPlayer.duration) * 100;
+        const duration = this.getPlaybackDuration();
+        const currentTime = this.getPlaybackCurrentTime();
+        if (!duration) return;
+
+        const percent = (currentTime / duration) * 100;
         if (this.progressFill) this.progressFill.style.width = `${percent}%`;
         if (this.nowPlayingTime) {
-            this.nowPlayingTime.textContent = `${this.formatTime(this.audioPlayer.currentTime)} / ${this.formatTime(this.audioPlayer.duration)}`;
+            this.nowPlayingTime.textContent = `${this.formatTime(currentTime)} / ${this.formatTime(duration)}`;
         }
         // Throttle terminal update slightly
         const now = Date.now();
@@ -728,12 +755,24 @@ class MusicApp {
     seekToPosition(e) {
         const rect = e.currentTarget.getBoundingClientRect();
         const percent = (e.clientX - rect.left) / rect.width;
-        if (this.audioPlayer.duration) this.audioPlayer.currentTime = percent * this.audioPlayer.duration;
+        const duration = this.getPlaybackDuration();
+        if (!duration) return;
+
+        const nextTime = percent * duration;
+        if (this.ytApiPlayer && this.ytApiPlayer.seekTo) {
+            this.ytApiPlayer.seekTo(nextTime, true);
+        } else {
+            this.audioPlayer.currentTime = nextTime;
+        }
         this.renderCLITUI();
     }
 
     updatePlayBtnState() {
-        if (this.playIcon) this.playIcon.textContent = !this.audioPlayer.paused ? 'pause' : 'play_arrow';
+        let isPaused = this.audioPlayer.paused;
+        if (this.ytApiPlayer && this.ytApiPlayer.getPlayerState) {
+            isPaused = this.ytApiPlayer.getPlayerState() !== window.YT?.PlayerState?.PLAYING;
+        }
+        if (this.playIcon) this.playIcon.textContent = !isPaused ? 'pause' : 'play_arrow';
         this.renderCLITUI();
     }
 
@@ -905,17 +944,7 @@ class MusicApp {
         }
 
         try {
-            await this.ensureYouTubeApiReady();
-            this.ytApiPlayerHost.innerHTML = '';
-
-            this.ytApiPlayer = new window.YT.Player('ytApiPlayerHost', {
-                videoId,
-                playerVars: {
-                    playsinline: 1,
-                    rel: 0,
-                    modestbranding: 1
-                }
-            });
+            await this.loadYouTubeVideoById(videoId, false);
             this.showStatus('IFrame API player loaded');
         } catch (e) {
             this.showStatus('Failed to load IFrame API');
@@ -937,6 +966,100 @@ class MusicApp {
             return;
         }
         this.ytApiPlayer.pauseVideo();
+    }
+
+    async loadYouTubeVideoById(videoId, autoplay = true) {
+        await this.ensureYouTubeApiReady();
+        this.audioPlayer.pause();
+        this.audioPlayer.src = '';
+
+        if (this.ytApiPlayer && this.ytApiPlayer.loadVideoById) {
+            if (autoplay) {
+                this.ytApiPlayer.loadVideoById(videoId);
+            } else {
+                this.ytApiPlayer.cueVideoById(videoId);
+            }
+            this.startYouTubeProgressPolling();
+            this.updatePlayBtnState();
+            return;
+        }
+
+        this.ytApiPlayerHost.innerHTML = '';
+        this.ytApiPlayer = new window.YT.Player('ytApiPlayerHost', {
+            videoId,
+            playerVars: {
+                autoplay: autoplay ? 1 : 0,
+                playsinline: 1,
+                rel: 0,
+                modestbranding: 1
+            },
+            events: {
+                onReady: () => {
+                    if (autoplay) this.ytApiPlayer.playVideo();
+                    this.startYouTubeProgressPolling();
+                    this.updatePlayBtnState();
+                },
+                onStateChange: (event) => this.handleYouTubeStateChange(event),
+                onError: () => this.showStatus('YouTube player error')
+            }
+        });
+    }
+
+    handleYouTubeStateChange(event) {
+        const state = event?.data;
+        this.isPlaying = state === window.YT?.PlayerState?.PLAYING;
+        if (state === window.YT?.PlayerState?.ENDED) {
+            this.playNext();
+        }
+        this.updatePlayBtnState();
+    }
+
+    startYouTubeProgressPolling() {
+        this.stopYouTubeProgressPolling();
+        this.ytProgressTimer = window.setInterval(() => this.updateProgress(), 500);
+    }
+
+    stopYouTubeProgressPolling() {
+        if (!this.ytProgressTimer) return;
+        window.clearInterval(this.ytProgressTimer);
+        this.ytProgressTimer = null;
+    }
+
+    getPlaybackCurrentTime() {
+        if (this.ytApiPlayer && this.ytApiPlayer.getCurrentTime) {
+            return this.ytApiPlayer.getCurrentTime() || 0;
+        }
+        return this.audioPlayer.currentTime || 0;
+    }
+
+    getPlaybackDuration() {
+        if (this.ytApiPlayer && this.ytApiPlayer.getDuration) {
+            return this.ytApiPlayer.getDuration() || 0;
+        }
+        return this.audioPlayer.duration || 0;
+    }
+
+    isPlaybackPaused() {
+        if (this.ytApiPlayer && this.ytApiPlayer.getPlayerState) {
+            return this.ytApiPlayer.getPlayerState() !== window.YT?.PlayerState?.PLAYING;
+        }
+        return this.audioPlayer.paused;
+    }
+
+    pausePlayback() {
+        if (this.ytApiPlayer && this.ytApiPlayer.pauseVideo) {
+            this.ytApiPlayer.pauseVideo();
+            return;
+        }
+        this.audioPlayer.pause();
+    }
+
+    resumePlayback() {
+        if (this.ytApiPlayer && this.ytApiPlayer.playVideo) {
+            this.ytApiPlayer.playVideo();
+            return;
+        }
+        this.audioPlayer.play();
     }
 
     showStatus(msg, dur = 3000) {
